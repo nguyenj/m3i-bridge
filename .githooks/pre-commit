@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+mapfile -d '' staged_go_files < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.go')
+
+if ((${#staged_go_files[@]})); then
+  partially_staged=()
+  for file in "${staged_go_files[@]}"; do
+    if ! git diff --quiet -- "$file"; then
+      partially_staged+=("$file")
+    fi
+  done
+
+  if ((${#partially_staged[@]})); then
+    echo "pre-commit: these staged Go files also have unstaged changes:"
+    printf '  %s\n' "${partially_staged[@]}"
+    echo "pre-commit: commit or stash the unstaged changes before auto-formatting."
+    exit 1
+  fi
+
+  echo "pre-commit: formatting staged Go files"
+  gofmt -w "${staged_go_files[@]}"
+  git add -- "${staged_go_files[@]}"
+fi
+
+shopt -s nullglob
+shell_scripts=(deploy/*.sh)
+if ((${#shell_scripts[@]})); then
+  echo "pre-commit: checking shell script syntax"
+  bash -n "${shell_scripts[@]}"
+fi
+
+echo "pre-commit: running go vet ./..."
+go vet ./...
+
+echo "pre-commit: running go test ./..."
+go test ./...

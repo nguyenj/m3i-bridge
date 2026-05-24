@@ -1,0 +1,25 @@
+[Unit]
+Description=Keiser M3i -> ANT+ bridge for Garmin watches
+After=bluetooth.service hciuart.service systemd-udev-trigger.service
+Wants=bluetooth.service hciuart.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=LD_LIBRARY_PATH=/usr/local/lib/m3i-bridge
+ExecStartPre=/usr/local/lib/m3i-bridge/preflight.sh
+ExecStart=/usr/local/bin/m3i-bridge
+Restart=always
+RestartSec=2
+
+# The broadcaster pins an OS thread for ANT+ timing; give it room to breathe.
+Nice=-5
+
+# Hardening — no state on disk, narrow filesystem view.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

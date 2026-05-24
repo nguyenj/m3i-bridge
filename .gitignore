@@ -1,0 +1,12 @@
+# Local build outputs
+/m3i-bridge
+/dist/
+/release/
+
+# Go test artifacts
+*.test
+coverage.out
+
+# Local/editor state
+/.claude/
+.DS_Store

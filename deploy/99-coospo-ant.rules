@@ -1,0 +1,5 @@
+# udev rules granting libusb access to the CooSpo RC401-cs ANT stick
+# (and to the Garmin ANTUSB2/ANTUSB-m sticks, in case you ever swap).
+# The vendor ID 0x0FCF is Dynastream; all current ANT+ sticks reuse it.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fcf", ATTRS{idProduct}=="1008", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fcf", ATTRS{idProduct}=="1009", MODE="0666"
