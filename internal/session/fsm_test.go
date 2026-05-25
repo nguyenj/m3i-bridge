@@ -110,8 +110,7 @@ func TestFSM_StatsTimeoutNewFirmwareGoesStale(t *testing.T) {
 	fsm := New(clk)
 	fsm.Observe(realtimeAdvert(clk.t, 150, 80, true))
 
-	// New-firmware stats window is 1s. Advance just past it.
-	clk.Advance(1100 * time.Millisecond)
+	clk.Advance(StatsTimeoutNew + 100*time.Millisecond)
 	events := fsm.Tick()
 	if _, ok := findEvent(events, EventSessionStale); !ok {
 		t.Errorf("expected SessionStale in %+v", events)
@@ -127,7 +126,7 @@ func TestFSM_StatsTimeoutNewFirmwareGoesStale(t *testing.T) {
 	}
 }
 
-func TestFSM_StatsTimeoutOldFirmwareWaits7s(t *testing.T) {
+func TestFSM_StatsTimeoutOldFirmwareWaitsForFreshnessWindow(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(0, 0)}
 	fsm := New(clk)
 	fsm.Observe(realtimeAdvert(clk.t, 150, 80, false)) // old firmware
@@ -136,9 +135,9 @@ func TestFSM_StatsTimeoutOldFirmwareWaits7s(t *testing.T) {
 	if events := fsm.Tick(); len(events) != 0 {
 		t.Errorf("2s into old-firmware session should not be stale yet, got %+v", events)
 	}
-	clk.Advance(6 * time.Second) // total 8s
+	clk.Advance(StatsTimeoutOld)
 	if _, ok := findEvent(fsm.Tick(), EventSessionStale); !ok {
-		t.Error("expected SessionStale after 8s on old firmware")
+		t.Error("expected SessionStale after stats freshness window")
 	}
 }
 
@@ -147,7 +146,7 @@ func TestFSM_StaleSessionRecoversOnNewAdvert(t *testing.T) {
 	fsm := New(clk)
 	fsm.Observe(realtimeAdvert(clk.t, 150, 80, true))
 
-	clk.Advance(2 * time.Second)
+	clk.Advance(StatsTimeoutNew + time.Second)
 	fsm.Tick() // -> stale
 
 	if fsm.State() != StateStale {
@@ -212,9 +211,23 @@ func TestFSM_ReviewAdvertDuringActiveSessionDoesNotResetTimers(t *testing.T) {
 
 	// Real-time silence: stats timeout should still fire based on the original advert,
 	// not refreshed by the review.
-	clk.Advance(700 * time.Millisecond) // total 1.2s since last realtime
+	clk.Advance(StatsTimeoutNew)
 	if _, ok := findEvent(fsm.Tick(), EventSessionStale); !ok {
 		t.Error("expected SessionStale to fire based on realtime advert age")
+	}
+}
+
+func TestFSM_SparseRealtimeKeepsLastStatsWithinFreshnessWindow(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	fsm := New(clk)
+	fsm.Observe(realtimeAdvert(clk.t, 150, 80, true))
+
+	clk.Advance(10 * time.Second)
+	if events := fsm.Tick(); len(events) != 0 {
+		t.Errorf("sparse realtime gap inside freshness window should not zero stats, got %+v", events)
+	}
+	if fsm.State() != StateActive {
+		t.Errorf("state = %v, want ACTIVE", fsm.State())
 	}
 }
 
