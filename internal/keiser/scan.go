@@ -33,25 +33,17 @@ type Scanner struct {
 	// Caller owns construction (recommend buffer of ~16).
 	Out chan<- Advert
 
-	// Restart receives requests to restart BlueZ discovery without restarting
-	// the process. This is used when realtime Keiser stats go stale; the bike
-	// is a non-connectable advertiser, so restarting discovery is the cheapest
-	// way to recover a scanner that stopped receiving duplicate adverts.
+	// Restart receives requests to restart BLE discovery without restarting the
+	// process. This is used when realtime Keiser stats go stale; the bike is a
+	// non-connectable advertiser, so restarting discovery is the cheapest way
+	// to recover a scanner that stopped receiving duplicate adverts.
 	Restart <-chan string
 }
 
 // Run starts the scan and blocks. It returns when ctx is cancelled or the BLE
 // stack fails to start. The scanner stops scanning cleanly on cancel.
 func (s *Scanner) Run(ctx context.Context) error {
-	if err := s.runRawHCI(ctx); err != nil && ctx.Err() == nil {
-		log := s.Logger
-		if log == nil {
-			log = slog.Default()
-		}
-		log.Warn("BLE raw HCI scan failed; falling back to BlueZ D-Bus scan", "err", err)
-		return s.runBlueZDBus(ctx)
-	}
-	return nil
+	return s.runRawHCI(ctx)
 }
 
 func (s *Scanner) runBlueZDBus(ctx context.Context) error {
