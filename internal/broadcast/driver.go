@@ -42,7 +42,6 @@ var antPlusNetworkKey = [8]byte{0xB9, 0xA5, 0x21, 0xFB, 0xBD, 0x72, 0xC3, 0x45}
 
 type antController interface {
 	Close() error
-	StopResponses()
 	ResetSystem(context.Context) error
 	SetNetworkKey(context.Context, byte, [8]byte) error
 	AssignChannel(context.Context, byte, byte, byte) error

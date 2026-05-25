@@ -92,8 +92,6 @@ func (b *Broadcaster) Run(ctx context.Context) error {
 	if err := state.startSession(ctx); err != nil {
 		return err
 	}
-	device.StopResponses()
-	log.Info("ant setup complete; receive loop stopped")
 	defer state.endSession(context.Background()) // ensure clean shutdown if context cancelled
 
 	// Broadcast ticker. ANT+ channel period is 8182/32768 ≈ 0.24985s. The
