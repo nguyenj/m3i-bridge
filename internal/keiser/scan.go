@@ -43,6 +43,18 @@ type Scanner struct {
 // Run starts the scan and blocks. It returns when ctx is cancelled or the BLE
 // stack fails to start. The scanner stops scanning cleanly on cancel.
 func (s *Scanner) Run(ctx context.Context) error {
+	if err := s.runRawHCI(ctx); err != nil && ctx.Err() == nil {
+		log := s.Logger
+		if log == nil {
+			log = slog.Default()
+		}
+		log.Warn("BLE raw HCI scan failed; falling back to BlueZ D-Bus scan", "err", err)
+		return s.runBlueZDBus(ctx)
+	}
+	return nil
+}
+
+func (s *Scanner) runBlueZDBus(ctx context.Context) error {
 	log := s.Logger
 	if log == nil {
 		log = slog.Default()
@@ -254,6 +266,10 @@ func (s *Scanner) processDevice(props map[string]dbus.Variant, filter *DropoutFi
 		}
 		return
 	}
+	s.processKeiserPayload(raw, localName, filter, stats)
+}
+
+func (s *Scanner) processKeiserPayload(raw []byte, localName string, filter *DropoutFilter, stats *scanStats) {
 	stats.payloads++
 	advert, err := Parse(raw, time.Now())
 	if err != nil {
