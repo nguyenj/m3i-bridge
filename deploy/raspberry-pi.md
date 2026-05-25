@@ -189,6 +189,13 @@ card on your workstation and read these files from the boot partition:
 - `m3i-bridge-diagnostics.log`: runtime status, service logs, Bluetooth state,
   ANT USB detection, udev rules, and recent kernel messages.
 
+For a ride verification, leave the Pi powered for at least 5 minutes while
+pedaling. In `m3i-bridge-diagnostics.log`, `BLE scan summary` should show the
+`realtime` count increasing and recent `last_seen_ago` values. If the stream
+goes stale, the service logs a BLE discovery restart and the `restarts` count
+will increase. `ant broadcast summary` should show `non_zero_broadcasts`
+increasing while the Keiser is sending non-zero power or cadence.
+
 ## Offline Updates
 
 Prepare a new SD card the same way with the new CI artifact or release tarball.

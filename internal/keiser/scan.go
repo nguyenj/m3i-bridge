@@ -32,6 +32,12 @@ type Scanner struct {
 	// block on a slow consumer — adverts get dropped (logged) if Out is full.
 	// Caller owns construction (recommend buffer of ~16).
 	Out chan<- Advert
+
+	// Restart receives requests to restart BlueZ discovery without restarting
+	// the process. This is used when realtime Keiser stats go stale; the bike
+	// is a non-connectable advertiser, so restarting discovery is the cheapest
+	// way to recover a scanner that stopped receiving duplicate adverts.
+	Restart <-chan string
 }
 
 // Run starts the scan and blocks. It returns when ctx is cancelled or the BLE
@@ -88,11 +94,8 @@ func (s *Scanner) Run(ctx context.Context) error {
 	}
 	defer bus.RemoveMatchSignal(objectManagerMatchOptions...)
 
-	if call := adapter.Call("org.bluez.Adapter1.SetDiscoveryFilter", 0, map[string]interface{}{
-		"Transport":     "le",
-		"DuplicateData": true,
-	}); call.Err != nil {
-		return fmt.Errorf("set BLE discovery filter: %w", call.Err)
+	if err := setDiscoveryFilter(adapter); err != nil {
+		return fmt.Errorf("set BLE discovery filter: %w", err)
 	}
 	defer adapter.Call("org.bluez.Adapter1.SetDiscoveryFilter", 0)
 
@@ -105,23 +108,30 @@ func (s *Scanner) Run(ctx context.Context) error {
 		s.processDevice(props, &filter, &stats)
 	}
 
-	startDiscovery := adapter.Go("org.bluez.Adapter1.StartDiscovery", 0, nil)
-	startDiscoveryDone := startDiscovery.Done
+	if err := startDiscovery(adapter); err != nil {
+		return fmt.Errorf("start BLE discovery: %w", err)
+	}
 	defer adapter.Call("org.bluez.Adapter1.StopDiscovery", 0)
 
 	log.Info("BLE scan starting", "local_name", LocalName, "duplicate_data", true)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	var ignoreDiscoveryStopUntil time.Time
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-startDiscoveryDone:
-			if startDiscovery.Err != nil {
-				return fmt.Errorf("start BLE discovery: %w", startDiscovery.Err)
+		case reason, ok := <-s.Restart:
+			if !ok {
+				s.Restart = nil
+				continue
 			}
-			startDiscoveryDone = nil
+			if err := restartDiscovery(adapter, log, reason); err != nil {
+				return fmt.Errorf("restart BLE discovery: %w", err)
+			}
+			ignoreDiscoveryStopUntil = time.Now().Add(2 * time.Second)
+			stats.restarts++
 		case sig := <-signal:
 			switch sig.Name {
 			case "org.freedesktop.DBus.ObjectManager.InterfacesAdded":
@@ -144,7 +154,15 @@ func (s *Scanner) Run(ctx context.Context) error {
 				if iface == "org.bluez.Adapter1" {
 					changes, _ := sig.Body[1].(map[string]dbus.Variant)
 					if discovering, ok := boolProperty(changes, "Discovering"); ok && !discovering {
-						return errors.New("BLE discovery stopped unexpectedly")
+						if time.Now().Before(ignoreDiscoveryStopUntil) {
+							log.Debug("BLE discovery stop signal ignored after restart")
+							continue
+						}
+						if err := restartDiscovery(adapter, log, "adapter reported discovery stopped"); err != nil {
+							return fmt.Errorf("restart BLE discovery after stop: %w", err)
+						}
+						ignoreDiscoveryStopUntil = time.Now().Add(2 * time.Second)
+						stats.restarts++
 					}
 					continue
 				}
@@ -165,6 +183,45 @@ func (s *Scanner) Run(ctx context.Context) error {
 			stats.log(log)
 		}
 	}
+}
+
+func setDiscoveryFilter(adapter dbus.BusObject) error {
+	if call := adapter.Call("org.bluez.Adapter1.SetDiscoveryFilter", 0, map[string]interface{}{
+		"Transport":     "le",
+		"DuplicateData": true,
+	}); call.Err != nil {
+		return call.Err
+	}
+	return nil
+}
+
+func startDiscovery(adapter dbus.BusObject) error {
+	if call := adapter.Call("org.bluez.Adapter1.StartDiscovery", 0); call.Err != nil {
+		if strings.Contains(call.Err.Error(), "org.bluez.Error.InProgress") {
+			return nil
+		}
+		return call.Err
+	}
+	return nil
+}
+
+func restartDiscovery(adapter dbus.BusObject, log *slog.Logger, reason string) error {
+	if reason == "" {
+		reason = "requested"
+	}
+	log.Info("BLE scan restarting", "reason", reason)
+	if call := adapter.Call("org.bluez.Adapter1.StopDiscovery", 0); call.Err != nil {
+		log.Debug("BLE stop discovery before restart failed", "reason", reason, "err", call.Err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := setDiscoveryFilter(adapter); err != nil {
+		return err
+	}
+	if err := startDiscovery(adapter); err != nil {
+		return err
+	}
+	log.Info("BLE scan restarted", "reason", reason)
+	return nil
 }
 
 func (s *Scanner) processDevice(props map[string]dbus.Variant, filter *DropoutFilter, stats *scanStats) {
@@ -294,6 +351,7 @@ type scanStats struct {
 	parseErrors     uint64
 	dropped         uint64
 	managedDevices  uint64
+	restarts        uint64
 
 	lastName           string
 	lastRealtime       time.Time
@@ -313,6 +371,7 @@ func (s *scanStats) log(log *slog.Logger) {
 		"parse_errors", s.parseErrors,
 		"dropped", s.dropped,
 		"managed_devices", s.managedDevices,
+		"restarts", s.restarts,
 	}
 	if !s.lastRealtime.IsZero() {
 		attrs = append(attrs,

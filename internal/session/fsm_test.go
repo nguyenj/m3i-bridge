@@ -222,7 +222,7 @@ func TestFSM_SparseRealtimeKeepsLastStatsWithinFreshnessWindow(t *testing.T) {
 	fsm := New(clk)
 	fsm.Observe(realtimeAdvert(clk.t, 150, 80, true))
 
-	clk.Advance(10 * time.Second)
+	clk.Advance(StatsTimeoutNew / 2)
 	if events := fsm.Tick(); len(events) != 0 {
 		t.Errorf("sparse realtime gap inside freshness window should not zero stats, got %+v", events)
 	}

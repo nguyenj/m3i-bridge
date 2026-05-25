@@ -21,18 +21,18 @@ func build(opts func(b []byte)) []byte {
 func TestParse_RealtimeMain(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	buf := build(func(b []byte) {
-		b[2] = 6                                    // version major
-		b[3] = 32                                   // version minor (new firmware)
-		b[4] = 0                                    // data type: realtime main
-		b[5] = 42                                   // equipment id
-		binary.LittleEndian.PutUint16(b[6:], 905)   // cadence 90.5 rpm -> /10 = 90
-		binary.LittleEndian.PutUint16(b[8:], 1450)  // hr 145.0 bpm -> /10 = 145
-		binary.LittleEndian.PutUint16(b[10:], 215)  // power 215 W
-		binary.LittleEndian.PutUint16(b[12:], 1234) // calories
-		b[14] = 12                                  // duration min
-		b[15] = 34                                  // duration sec
-		binary.LittleEndian.PutUint16(b[16:], 95)   // distance 9.5 km (msb=0)
-		b[18] = 17                                  // gear
+		b[2] = 6                                         // version major
+		b[3] = 32                                        // version minor (new firmware)
+		b[4] = 0                                         // data type: realtime main
+		b[5] = 42                                        // equipment id
+		binary.LittleEndian.PutUint16(b[6:], 905)        // cadence 90.5 rpm -> /10 = 90
+		binary.LittleEndian.PutUint16(b[8:], 1450)       // hr 145.0 bpm -> /10 = 145
+		binary.LittleEndian.PutUint16(b[10:], 215)       // power 215 W
+		binary.LittleEndian.PutUint16(b[12:], 1234)      // calories
+		b[14] = 12                                       // duration min
+		b[15] = 34                                       // duration sec
+		binary.LittleEndian.PutUint16(b[16:], 0x8000|95) // distance 9.5 km (msb=1)
+		b[18] = 17                                       // gear
 	})
 
 	got, err := Parse(buf, now)
@@ -92,7 +92,7 @@ func TestParse_RealtimeInterval(t *testing.T) {
 
 func TestParse_ReviewModeIsIgnoredByCaller(t *testing.T) {
 	// Parser still returns the data; classification flags it as review.
-	for _, dt := range []uint8{1, 16, 32} {
+	for _, dt := range []uint8{1, 16, 99} {
 		buf := build(func(b []byte) { b[4] = dt })
 		got, err := Parse(buf, time.Now())
 		if err != nil {
@@ -108,9 +108,9 @@ func TestParse_ReviewModeIsIgnoredByCaller(t *testing.T) {
 }
 
 func TestParse_UnknownDataType(t *testing.T) {
-	// Values not in 0, 1-32, or 128-227 are protocol-illegal but we should
+	// Values not in 0, 1-99, or 128-227 are protocol-illegal but we should
 	// classify them as unknown without panicking.
-	for _, dt := range []uint8{33, 127, 228, 255} {
+	for _, dt := range []uint8{100, 127, 228, 255} {
 		buf := build(func(b []byte) { b[4] = dt })
 		got, err := Parse(buf, time.Now())
 		if err != nil {
@@ -137,20 +137,51 @@ func TestParse_OldFirmwareTimeoutBucket(t *testing.T) {
 
 func TestParse_DistanceImperial(t *testing.T) {
 	buf := build(func(b []byte) {
-		binary.LittleEndian.PutUint16(b[16:], 0x8000|123) // miles, value=12.3
+		binary.LittleEndian.PutUint16(b[16:], 123) // miles, value=12.3
 	})
 	got, err := Parse(buf, time.Now())
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 	if got.DistanceMetric {
-		t.Error("DistanceMetric should be false when MSB set")
+		t.Error("DistanceMetric should be false when MSB clear")
 	}
 	if got.DistanceUnits != 12 {
 		t.Errorf("DistanceUnits = %d, want 12", got.DistanceUnits)
 	}
 	if got.DistanceTenths != 123 {
 		t.Errorf("DistanceTenths = %d, want 123", got.DistanceTenths)
+	}
+}
+
+func TestParse_OfficialDocExample(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	buf := []byte{
+		0x02, 0x01, // company id / protocol magic
+		0x06, 0x30, // version 6.30
+		0x00,       // realtime main
+		0x38,       // equipment id
+		0x38, 0x03, // cadence 82.4 rpm
+		0x46, 0x05, // heart rate 135.0 bpm
+		0x73, 0x00, // power 115 W
+		0x0D, 0x00, // calories 13
+		0x04, 0x27, // duration 4:39
+		0x01, 0x00, // distance 0.1 miles
+		0x0A, // gear 10
+	}
+
+	got, err := Parse(buf, now)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got.CadenceRPM != 82 || got.HeartRateBPM != 135 || got.PowerWatts != 115 {
+		t.Errorf("metrics = cadence:%d hr:%d power:%d, want 82/135/115", got.CadenceRPM, got.HeartRateBPM, got.PowerWatts)
+	}
+	if got.DistanceTenths != 1 || got.DistanceMetric {
+		t.Errorf("distance = tenths:%d metric:%v, want 1 mile-tenth", got.DistanceTenths, got.DistanceMetric)
+	}
+	if got.Gear != 10 {
+		t.Errorf("gear = %d, want 10", got.Gear)
 	}
 }
 

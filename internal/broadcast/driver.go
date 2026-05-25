@@ -42,6 +42,7 @@ var antPlusNetworkKey = [8]byte{0xB9, 0xA5, 0x21, 0xFB, 0xBD, 0x72, 0xC3, 0x45}
 
 type antController interface {
 	Close() error
+	StopResponses()
 	ResetSystem(context.Context) error
 	SetNetworkKey(context.Context, byte, [8]byte) error
 	AssignChannel(context.Context, byte, byte, byte) error
@@ -171,10 +172,7 @@ func openANTUSBCandidate(parent context.Context, log *slog.Logger, candidate ant
 }
 
 func (s *antUSBStick) Close() error {
-	if s.readCancel != nil {
-		s.readCancel()
-		<-s.readDone
-	}
+	s.StopResponses()
 	if s.closeIface != nil {
 		s.closeIface()
 	}
@@ -185,6 +183,14 @@ func (s *antUSBStick) Close() error {
 		return s.ctx.Close()
 	}
 	return nil
+}
+
+func (s *antUSBStick) StopResponses() {
+	if s.readCancel != nil {
+		s.readCancel()
+		<-s.readDone
+		s.readCancel = nil
+	}
 }
 
 func (s *antUSBStick) ResetSystem(ctx context.Context) error {

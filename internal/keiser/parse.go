@@ -19,7 +19,7 @@ var Magic = []byte{0x02, 0x01}
 const PayloadLen = 19
 
 // NewFirmwareMinor is the version-minor threshold at which the bike switched
-// to ~318.75ms broadcast intervals from the older ~2s interval.
+// from ~2s broadcast intervals to sub-second broadcast intervals.
 const NewFirmwareMinor = 30
 
 // DataType classifies a Keiser advert per byte 4 of the payload.
@@ -32,7 +32,7 @@ func (d DataType) Classify() Mode {
 	switch {
 	case d == 0:
 		return ModeRealtimeMain
-	case d >= 1 && d <= 32:
+	case d >= 1 && d <= 99:
 		return ModeReview
 	case d >= 128 && d <= 227:
 		return ModeRealtimeInterval
@@ -77,7 +77,7 @@ type Advert struct {
 	DistanceUnits  uint16 // integer km/miles, truncated for display/logging
 	DistanceMetric bool   // true = km, false = miles
 
-	Gear uint8 // 1-24, 0 when braking or firmware < 4.21
+	Gear uint8 // 1-24, 0 when braking or firmware < 6.21
 }
 
 // IsNewFirmware reports whether the bike is on firmware ≥6.x with the faster
@@ -121,7 +121,7 @@ func Parse(buf []byte, received time.Time) (Advert, error) {
 		DurationSec:    buf[15],
 		DistanceTenths: dist & 0x7FFF,
 		DistanceUnits:  (dist & 0x7FFF) / 10,
-		DistanceMetric: dist&0x8000 == 0,
+		DistanceMetric: dist&0x8000 != 0,
 		Gear:           buf[18],
 	}, nil
 }

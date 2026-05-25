@@ -4,11 +4,11 @@
 // for downstream consumers (the ANT+ broadcaster). It encodes the timing
 // semantics needed for Keiser realtime BLE adverts:
 //
-//   - StatsTimeoutNew/StatsTimeoutOld = 15s (stats freshness window; zeros are
-//     emitted when exceeded but the session stays alive)
+//   - StatsTimeoutNew = 1s and StatsTimeoutOld = 7s (stats freshness window;
+//     zeros are emitted when exceeded but the session stays alive)
 //   - BikeTimeout = 60s (no realtime advert for this long ends the session)
 //
-// Review-mode adverts (DataType 1-32) are filtered out by the FSM entirely:
+// Review-mode adverts (DataType 1-99) are filtered out by the FSM entirely:
 // they neither start a session nor refresh timers, so a bike replaying past
 // intervals never accidentally drives ANT+ output.
 package session
@@ -21,8 +21,8 @@ import (
 
 // Keiser session timing constants.
 const (
-	StatsTimeoutNew = 15 * time.Second
-	StatsTimeoutOld = 15 * time.Second
+	StatsTimeoutNew = 1 * time.Second
+	StatsTimeoutOld = 7 * time.Second
 	BikeTimeout     = 60 * time.Second
 )
 

@@ -92,6 +92,8 @@ func (b *Broadcaster) Run(ctx context.Context) error {
 	if err := state.startSession(ctx); err != nil {
 		return err
 	}
+	device.StopResponses()
+	log.Info("ant setup complete; receive loop stopped")
 	defer state.endSession(context.Background()) // ensure clean shutdown if context cancelled
 
 	// Broadcast ticker. ANT+ channel period is 8182/32768 ≈ 0.24985s. The
@@ -101,6 +103,8 @@ func (b *Broadcaster) Run(ctx context.Context) error {
 	tickInterval := time.Second * time.Duration(antplus.PowerChannelPeriod) / 32768
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
+	summaryTicker := time.NewTicker(30 * time.Second)
+	defer summaryTicker.Stop()
 
 	for {
 		select {
@@ -117,6 +121,8 @@ func (b *Broadcaster) Run(ctx context.Context) error {
 			if err := state.maybeBroadcast(ctx); err != nil {
 				return err
 			}
+		case <-summaryTicker.C:
+			state.logSummary()
 		}
 	}
 }
@@ -132,6 +138,9 @@ type broadcasterState struct {
 	active       bool
 	power        uint16
 	cadence      uint16
+
+	broadcasts        uint64
+	nonZeroBroadcasts uint64
 }
 
 func (s *broadcasterState) handle(ctx context.Context, ev session.Event) error {
@@ -233,5 +242,18 @@ func (s *broadcasterState) maybeBroadcast(ctx context.Context) error {
 	if err := s.dev.SendBroadcastData(ctx, speedChannelNumber, speedPage[:]); err != nil {
 		return fmt.Errorf("ant broadcast speed: %w", err)
 	}
+	s.broadcasts++
+	if s.power > 0 || s.cadence > 0 {
+		s.nonZeroBroadcasts++
+	}
 	return nil
+}
+
+func (s *broadcasterState) logSummary() {
+	s.log.Info("ant broadcast summary",
+		"active", s.active,
+		"power", s.power,
+		"cadence", s.cadence,
+		"broadcasts", s.broadcasts,
+		"non_zero_broadcasts", s.nonZeroBroadcasts)
 }
