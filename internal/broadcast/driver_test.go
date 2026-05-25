@@ -48,3 +48,25 @@ func TestANTDecoderDropsBadChecksum(t *testing.T) {
 		t.Fatalf("decoded message id = 0x%02x, want 0x%02x", got[0].ID, msgResponseEvent)
 	}
 }
+
+func TestParseANTEventTX(t *testing.T) {
+	ev, ok := parseANTEvent(antMessage{
+		ID:   msgResponseEvent,
+		Data: []byte{0x02, msgChannelEvent, eventTx},
+	})
+	if !ok {
+		t.Fatal("EVENT_TX was not parsed")
+	}
+	if ev.channel != 0x02 || ev.code != eventTx {
+		t.Fatalf("event = %+v, want channel 2 code EVENT_TX", ev)
+	}
+}
+
+func TestParseANTEventIgnoresCommandResponse(t *testing.T) {
+	if _, ok := parseANTEvent(antMessage{
+		ID:   msgResponseEvent,
+		Data: []byte{0x00, msgOpenChannel, responseNoError},
+	}); ok {
+		t.Fatal("command response parsed as channel event")
+	}
+}

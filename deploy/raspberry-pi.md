@@ -191,10 +191,10 @@ card on your workstation and read these files from the boot partition:
 
 For a ride verification, leave the Pi powered for at least 5 minutes while
 pedaling. In `m3i-bridge-diagnostics.log`, `BLE scan summary` should show the
-`realtime` count increasing and recent `last_seen_ago` values. If the stream
-goes stale, the service logs a BLE discovery restart and the `restarts` count
-will increase. `ant broadcast summary` should show `non_zero_broadcasts`
-increasing while the Keiser is sending non-zero power or cadence.
+`realtime` count increasing and recent `last_seen_ago` values. `ant broadcast
+summary` should show `tx_events`, `power_broadcasts`, `speed_broadcasts`, and
+`non_zero_broadcasts` increasing while the Keiser is sending non-zero power or
+cadence.
 
 ## Offline Updates
 

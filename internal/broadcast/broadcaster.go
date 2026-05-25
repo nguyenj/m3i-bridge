@@ -93,16 +93,15 @@ func (b *Broadcaster) Run(ctx context.Context) error {
 		return err
 	}
 	defer state.endSession(context.Background()) // ensure clean shutdown if context cancelled
+	if err := state.broadcastAll(ctx); err != nil {
+		return err
+	}
 
-	// Broadcast ticker. ANT+ channel period is 8182/32768 ≈ 0.24985s. The
-	// chip handles its own timing on a real ANT+ slot — our ticker just
-	// drives when we hand it the next page. A slightly fast ticker is fine;
-	// the chip will buffer.
-	tickInterval := time.Second * time.Duration(antplus.PowerChannelPeriod) / 32768
-	ticker := time.NewTicker(tickInterval)
-	defer ticker.Stop()
+	refreshTicker := time.NewTicker(time.Second)
+	defer refreshTicker.Stop()
 	summaryTicker := time.NewTicker(30 * time.Second)
 	defer summaryTicker.Stop()
+	channelEvents := device.ChannelEvents()
 
 	for {
 		select {
@@ -115,8 +114,13 @@ func (b *Broadcaster) Run(ctx context.Context) error {
 			if err := state.handle(ctx, ev); err != nil {
 				return err
 			}
-		case <-ticker.C:
-			if err := state.maybeBroadcast(ctx); err != nil {
+		case ev := <-channelEvents:
+			if err := state.handleANTEvent(ctx, ev); err != nil {
+				return err
+			}
+		case <-refreshTicker.C:
+			state.refreshBroadcasts++
+			if err := state.broadcastAll(ctx); err != nil {
 				return err
 			}
 		case <-summaryTicker.C:
@@ -137,7 +141,11 @@ type broadcasterState struct {
 	power        uint16
 	cadence      uint16
 
-	broadcasts        uint64
+	channelEvents     uint64
+	txEvents          uint64
+	refreshBroadcasts uint64
+	powerBroadcasts   uint64
+	speedBroadcasts   uint64
 	nonZeroBroadcasts uint64
 }
 
@@ -164,6 +172,22 @@ func (s *broadcasterState) applyStats(ev session.Event) {
 	s.cadence = ev.Cadence
 	if ev.DistanceValid {
 		s.speedEncoder.ObserveDistance(ev.At, ev.DistanceTenths, ev.DistanceMetric)
+	}
+}
+
+func (s *broadcasterState) handleANTEvent(ctx context.Context, ev antEvent) error {
+	s.channelEvents++
+	if ev.code != eventTx {
+		return nil
+	}
+	s.txEvents++
+	switch ev.channel {
+	case powerChannelNumber:
+		return s.broadcastPower(ctx)
+	case speedChannelNumber:
+		return s.broadcastSpeed(ctx)
+	default:
+		return nil
 	}
 }
 
@@ -227,7 +251,17 @@ func (s *broadcasterState) endSession(ctx context.Context) {
 	s.power, s.cadence = 0, 0
 }
 
-func (s *broadcasterState) maybeBroadcast(ctx context.Context) error {
+func (s *broadcasterState) broadcastAll(ctx context.Context) error {
+	if !s.active {
+		return nil
+	}
+	if err := s.broadcastPower(ctx); err != nil {
+		return err
+	}
+	return s.broadcastSpeed(ctx)
+}
+
+func (s *broadcasterState) broadcastPower(ctx context.Context) error {
 	if !s.active {
 		return nil
 	}
@@ -235,15 +269,22 @@ func (s *broadcasterState) maybeBroadcast(ctx context.Context) error {
 	if err := s.dev.SendBroadcastData(ctx, powerChannelNumber, powerPage[:]); err != nil {
 		return fmt.Errorf("ant broadcast power: %w", err)
 	}
+	s.powerBroadcasts++
+	if s.power > 0 || s.cadence > 0 {
+		s.nonZeroBroadcasts++
+	}
+	return nil
+}
 
+func (s *broadcasterState) broadcastSpeed(ctx context.Context) error {
+	if !s.active {
+		return nil
+	}
 	speedPage := s.speedEncoder.EncodePage0()
 	if err := s.dev.SendBroadcastData(ctx, speedChannelNumber, speedPage[:]); err != nil {
 		return fmt.Errorf("ant broadcast speed: %w", err)
 	}
-	s.broadcasts++
-	if s.power > 0 || s.cadence > 0 {
-		s.nonZeroBroadcasts++
-	}
+	s.speedBroadcasts++
 	return nil
 }
 
@@ -252,6 +293,10 @@ func (s *broadcasterState) logSummary() {
 		"active", s.active,
 		"power", s.power,
 		"cadence", s.cadence,
-		"broadcasts", s.broadcasts,
+		"channel_events", s.channelEvents,
+		"tx_events", s.txEvents,
+		"refresh_broadcasts", s.refreshBroadcasts,
+		"power_broadcasts", s.powerBroadcasts,
+		"speed_broadcasts", s.speedBroadcasts,
 		"non_zero_broadcasts", s.nonZeroBroadcasts)
 }

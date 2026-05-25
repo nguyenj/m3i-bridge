@@ -22,6 +22,7 @@ const (
 	msgChannelPeriod        byte = 0x43
 	msgChannelRFFrequency   byte = 0x45
 	msgNetworkKey           byte = 0x46
+	msgChannelEvent         byte = 0x01
 	msgSystemReset          byte = 0x4A
 	msgOpenChannel          byte = 0x4B
 	msgCloseChannel         byte = 0x4C
@@ -30,7 +31,7 @@ const (
 	msgChannelTransmitPower byte = 0x60
 	msgStartup              byte = 0x6F
 	responseNoError         byte = 0x00
-	responseEventTx         byte = 0x03
+	eventTx                 byte = 0x03
 	channelTypeTransmit     byte = 0x10
 	radioTransmitPowerMax   byte = 0x03
 	antUSBTransferTimeout        = 750 * time.Millisecond
@@ -53,6 +54,7 @@ type antController interface {
 	CloseChannel(context.Context, byte) error
 	UnassignChannel(context.Context, byte) error
 	SendBroadcastData(context.Context, byte, []byte) error
+	ChannelEvents() <-chan antEvent
 }
 
 type antOpenFunc func(context.Context, *slog.Logger) (antController, error)
@@ -70,6 +72,7 @@ type antUSBStick struct {
 	readCancel context.CancelFunc
 	readDone   chan struct{}
 	responses  chan antMessage
+	events     chan antEvent
 
 	writeMu sync.Mutex
 }
@@ -83,6 +86,11 @@ type antUSBCandidate struct {
 type antMessage struct {
 	ID   byte
 	Data []byte
+}
+
+type antEvent struct {
+	channel byte
+	code    byte
 }
 
 func openANTUSB(ctx context.Context, log *slog.Logger) (antController, error) {
@@ -165,6 +173,7 @@ func openANTUSBCandidate(parent context.Context, log *slog.Logger, candidate ant
 		readCancel: readCancel,
 		readDone:   make(chan struct{}),
 		responses:  make(chan antMessage, 128),
+		events:     make(chan antEvent, 512),
 	}
 	go stick.readLoop()
 	return stick, nil
@@ -263,6 +272,10 @@ func (s *antUSBStick) SendBroadcastData(ctx context.Context, channel byte, data 
 	return s.send(ctx, msgBroadcastData, payload)
 }
 
+func (s *antUSBStick) ChannelEvents() <-chan antEvent {
+	return s.events
+}
+
 func (s *antUSBStick) command(ctx context.Context, messageID byte, payload []byte) error {
 	if err := s.send(ctx, messageID, payload); err != nil {
 		return err
@@ -278,7 +291,7 @@ func (s *antUSBStick) command(ctx context.Context, messageID byte, payload []byt
 		if msg.ID != msgResponseEvent || len(msg.Data) < 3 || msg.Data[1] != messageID {
 			continue
 		}
-		if msg.Data[2] == responseNoError || msg.Data[2] == responseEventTx {
+		if msg.Data[2] == responseNoError {
 			return nil
 		}
 		return fmt.Errorf("ANT response to 0x%02x on channel %d: 0x%02x", messageID, msg.Data[0], msg.Data[2])
@@ -324,6 +337,13 @@ func (s *antUSBStick) readLoop() {
 
 		if n > 0 {
 			for _, msg := range decoder.feed(buf[:n]) {
+				if ev, ok := parseANTEvent(msg); ok {
+					select {
+					case s.events <- ev:
+					default:
+						s.log.Warn("ant event dropped: channel full", "channel", ev.channel, "code", fmt.Sprintf("0x%02x", ev.code))
+					}
+				}
 				select {
 				case s.responses <- msg:
 				default:
@@ -351,6 +371,13 @@ func (s *antUSBStick) readLoop() {
 		s.log.Debug("ant usb read error", "err", err)
 		sleepOrDone(s.readCtx, antReadErrorBackoff)
 	}
+}
+
+func parseANTEvent(msg antMessage) (antEvent, bool) {
+	if msg.ID != msgResponseEvent || len(msg.Data) < 3 || msg.Data[1] != msgChannelEvent {
+		return antEvent{}, false
+	}
+	return antEvent{channel: msg.Data[0], code: msg.Data[2]}, true
 }
 
 func sleepOrDone(ctx context.Context, d time.Duration) {
