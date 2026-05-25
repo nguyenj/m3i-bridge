@@ -116,7 +116,10 @@ func (s *Scanner) Run(ctx context.Context) error {
 	log.Info("BLE scan starting", "local_name", LocalName, "duplicate_data", true)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	healthTicker := time.NewTicker(10 * time.Second)
+	defer healthTicker.Stop()
 	var ignoreDiscoveryStopUntil time.Time
+	var lastRestart time.Time
 
 	for {
 		select {
@@ -131,6 +134,7 @@ func (s *Scanner) Run(ctx context.Context) error {
 				return fmt.Errorf("restart BLE discovery: %w", err)
 			}
 			ignoreDiscoveryStopUntil = time.Now().Add(2 * time.Second)
+			lastRestart = time.Now()
 			stats.restarts++
 		case sig := <-signal:
 			switch sig.Name {
@@ -162,6 +166,7 @@ func (s *Scanner) Run(ctx context.Context) error {
 							return fmt.Errorf("restart BLE discovery after stop: %w", err)
 						}
 						ignoreDiscoveryStopUntil = time.Now().Add(2 * time.Second)
+						lastRestart = time.Now()
 						stats.restarts++
 					}
 					continue
@@ -170,10 +175,12 @@ func (s *Scanner) Run(ctx context.Context) error {
 					continue
 				}
 				props, ok := devices[sig.Path]
-				if !ok {
-					continue
-				}
 				changes, _ := sig.Body[1].(map[string]dbus.Variant)
+				if !ok {
+					props = changes
+					devices[sig.Path] = props
+					stats.uncachedDeviceChanges++
+				}
 				for k, v := range changes {
 					props[k] = v
 				}
@@ -181,6 +188,16 @@ func (s *Scanner) Run(ctx context.Context) error {
 			}
 		case <-ticker.C:
 			stats.log(log)
+		case <-healthTicker.C:
+			now := time.Now()
+			if stats.payloads == 0 && now.Sub(stats.started) >= 15*time.Second && now.Sub(lastRestart) >= 15*time.Second {
+				if err := restartDiscovery(adapter, log, "no Keiser payloads observed"); err != nil {
+					return fmt.Errorf("restart BLE discovery after empty scan: %w", err)
+				}
+				ignoreDiscoveryStopUntil = now.Add(2 * time.Second)
+				lastRestart = now
+				stats.restarts++
+			}
 		}
 	}
 }
@@ -227,8 +244,14 @@ func restartDiscovery(adapter dbus.BusObject, log *slog.Logger, reason string) e
 func (s *Scanner) processDevice(props map[string]dbus.Variant, filter *DropoutFilter, stats *scanStats) {
 	stats.observed++
 	localName, _ := stringProperty(props, "Name")
-	raw, ok := extractKeiserPayload(manufacturerData(props))
+	manufacturer := manufacturerData(props)
+	raw, ok := extractKeiserPayload(manufacturer)
 	if !ok {
+		if len(manufacturer) > 0 {
+			stats.manufacturerPayloads++
+			stats.lastNonKeiserName = localName
+			stats.lastCompanyIDs = companyIDList(manufacturer)
+		}
 		return
 	}
 	stats.payloads++
@@ -259,6 +282,17 @@ func (s *Scanner) processDevice(props map[string]dbus.Variant, filter *DropoutFi
 			s.Logger.Warn("advert dropped: downstream channel full")
 		}
 	}
+}
+
+func companyIDList(elems map[uint16][]byte) string {
+	if len(elems) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(elems))
+	for id := range elems {
+		ids = append(ids, fmt.Sprintf("0x%04x", id))
+	}
+	return strings.Join(ids, ",")
 }
 
 // extractKeiserPayload reconstructs the full 19-byte Keiser advert from the
@@ -344,16 +378,20 @@ func boolProperty(props map[string]dbus.Variant, name string) (bool, bool) {
 type scanStats struct {
 	started time.Time
 
-	observed        uint64
-	payloads        uint64
-	realtime        uint64
-	reviewOrUnknown uint64
-	parseErrors     uint64
-	dropped         uint64
-	managedDevices  uint64
-	restarts        uint64
+	observed              uint64
+	payloads              uint64
+	realtime              uint64
+	reviewOrUnknown       uint64
+	parseErrors           uint64
+	dropped               uint64
+	managedDevices        uint64
+	restarts              uint64
+	manufacturerPayloads  uint64
+	uncachedDeviceChanges uint64
 
 	lastName           string
+	lastNonKeiserName  string
+	lastCompanyIDs     string
 	lastRealtime       time.Time
 	lastPower          uint16
 	lastCadence        uint16
@@ -372,6 +410,13 @@ func (s *scanStats) log(log *slog.Logger) {
 		"dropped", s.dropped,
 		"managed_devices", s.managedDevices,
 		"restarts", s.restarts,
+		"manufacturer_payloads", s.manufacturerPayloads,
+		"uncached_device_changes", s.uncachedDeviceChanges,
+	}
+	if s.lastCompanyIDs != "" {
+		attrs = append(attrs,
+			"last_non_keiser_name", s.lastNonKeiserName,
+			"last_company_ids", s.lastCompanyIDs)
 	}
 	if !s.lastRealtime.IsZero() {
 		attrs = append(attrs,

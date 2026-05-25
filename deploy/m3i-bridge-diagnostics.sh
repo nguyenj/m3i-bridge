@@ -8,7 +8,9 @@ if [[ ! -d "$BOOT_DIR" ]]; then
 fi
 
 LOG_PATH="${BOOT_DIR}/m3i-bridge-diagnostics.log"
-exec >"$LOG_PATH" 2>&1
+exec >>"$LOG_PATH" 2>&1
+
+printf '\n# m3i-bridge diagnostics snapshot %s\n' "$(date -Is)"
 
 section() {
   printf '\n## %s\n' "$1"
