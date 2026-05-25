@@ -37,6 +37,7 @@ const (
 	rawHCIPollTimeoutMillis   = 500
 	rawHCIScanHealthInterval  = 15 * time.Second
 	rawHCIScanSummaryInterval = 30 * time.Second
+	rawHCIFilterSize          = 16
 )
 
 func (s *Scanner) runRawHCI(ctx context.Context) error {
@@ -213,11 +214,7 @@ func sendRawHCICommand(fd int, opcode uint16, params []byte) error {
 }
 
 func setRawHCIFilter(fd int) error {
-	var filter [14]byte
-	binary.LittleEndian.PutUint32(filter[0:4], 1<<hciEventPacket)
-	setHCIEventBit(filter[4:12], hciEventCommandComplete)
-	setHCIEventBit(filter[4:12], hciEventCommandStatus)
-	setHCIEventBit(filter[4:12], hciEventLEMeta)
+	filter := rawHCIFilterBytes()
 
 	_, _, errno := unix.Syscall6(
 		unix.SYS_SETSOCKOPT,
@@ -232,6 +229,17 @@ func setRawHCIFilter(fd int) error {
 		return errno
 	}
 	return nil
+}
+
+// HCI_FILTER uses the userspace hci_ufilter ABI: three uint32 masks plus a
+// uint16 opcode, rounded to 16 bytes by C struct padding.
+func rawHCIFilterBytes() [rawHCIFilterSize]byte {
+	var filter [rawHCIFilterSize]byte
+	binary.LittleEndian.PutUint32(filter[0:4], 1<<hciEventPacket)
+	setHCIEventBit(filter[4:12], hciEventCommandComplete)
+	setHCIEventBit(filter[4:12], hciEventCommandStatus)
+	setHCIEventBit(filter[4:12], hciEventLEMeta)
+	return filter
 }
 
 func setHCIEventBit(mask []byte, eventCode byte) {

@@ -8,6 +8,32 @@ import (
 	"time"
 )
 
+func TestRawHCIFilterBytes(t *testing.T) {
+	filter := rawHCIFilterBytes()
+	if len(filter) != rawHCIFilterSize {
+		t.Fatalf("filter length = %d, want %d", len(filter), rawHCIFilterSize)
+	}
+	if got, want := binary.LittleEndian.Uint32(filter[0:4]), uint32(1<<hciEventPacket); got != want {
+		t.Fatalf("type mask = 0x%08x, want 0x%08x", got, want)
+	}
+	eventMask0 := binary.LittleEndian.Uint32(filter[4:8])
+	for _, eventCode := range []byte{hciEventCommandComplete, hciEventCommandStatus} {
+		if eventMask0&(1<<eventCode) == 0 {
+			t.Fatalf("event mask[0] missing event 0x%02x: 0x%08x", eventCode, eventMask0)
+		}
+	}
+	eventMask1 := binary.LittleEndian.Uint32(filter[8:12])
+	if eventMask1&(1<<(hciEventLEMeta-32)) == 0 {
+		t.Fatalf("event mask[1] missing LE meta event: 0x%08x", eventMask1)
+	}
+	if opcode := binary.LittleEndian.Uint16(filter[12:14]); opcode != 0 {
+		t.Fatalf("opcode = 0x%04x, want 0", opcode)
+	}
+	if filter[14] != 0 || filter[15] != 0 {
+		t.Fatalf("filter padding = [%d %d], want [0 0]", filter[14], filter[15])
+	}
+}
+
 func TestParseAdvertisingData_KeiserManufacturerPayload(t *testing.T) {
 	keiserPayload := build(func(b []byte) {
 		b[2], b[3] = 6, 32
