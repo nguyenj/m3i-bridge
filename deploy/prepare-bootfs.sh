@@ -66,6 +66,10 @@ fi
 
 cp "$FIRSTBOOT_SRC" "${BOOTFS}/m3i-bridge-firstboot.sh"
 chmod 0755 "${BOOTFS}/m3i-bridge-firstboot.sh" 2>/dev/null || true
+rm -f \
+  "${BOOTFS}/m3i-bridge-firstboot.done" \
+  "${BOOTFS}/m3i-bridge-firstboot.log" \
+  "${BOOTFS}/m3i-bridge-diagnostics.log"
 
 if ! grep -Eq '^[[:space:]]*dtoverlay=disable-wifi([[:space:]]*(#.*)?)?$' "${BOOTFS}/config.txt"; then
   cat >>"${BOOTFS}/config.txt" <<EOF
@@ -91,4 +95,6 @@ Next steps:
   3. Insert the SD card and power the Pi.
   4. First boot installs m3i-bridge, disables networking, and reboots.
   5. Second boot starts m3i-bridge automatically.
+  6. Leave the Pi powered for at least 2 minutes after the second boot before
+     removing the SD card for diagnostics.
 EOF

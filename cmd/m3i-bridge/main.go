@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -36,6 +37,7 @@ func main() {
 	if !*verbose {
 		stdlog.SetOutput(io.Discard)
 	}
+	log.Info("m3i-bridge starting", buildInfoAttrs()...)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -44,6 +46,31 @@ func main() {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+func buildInfoAttrs() []any {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return nil
+	}
+
+	attrs := []any{
+		"go_version", info.GoVersion,
+	}
+	if info.Main.Version != "" && info.Main.Version != "(devel)" {
+		attrs = append(attrs, "module_version", info.Main.Version)
+	}
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			attrs = append(attrs, "vcs_revision", setting.Value)
+		case "vcs.time":
+			attrs = append(attrs, "vcs_time", setting.Value)
+		case "vcs.modified":
+			attrs = append(attrs, "vcs_modified", setting.Value)
+		}
+	}
+	return attrs
 }
 
 func run(ctx context.Context, log *slog.Logger) error {

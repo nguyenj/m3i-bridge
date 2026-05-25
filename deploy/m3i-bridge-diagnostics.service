@@ -5,7 +5,7 @@ Wants=m3i-bridge.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'sleep 75; /usr/local/lib/m3i-bridge/diagnostics.sh; sleep 225; /usr/local/lib/m3i-bridge/diagnostics.sh; sleep 300; /usr/local/lib/m3i-bridge/diagnostics.sh'
+ExecStart=/bin/sh -c 'sleep 30; /usr/local/lib/m3i-bridge/diagnostics.sh; sleep 60; /usr/local/lib/m3i-bridge/diagnostics.sh; sleep 120; /usr/local/lib/m3i-bridge/diagnostics.sh; sleep 300; /usr/local/lib/m3i-bridge/diagnostics.sh'
 
 [Install]
 WantedBy=multi-user.target

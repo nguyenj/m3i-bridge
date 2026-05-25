@@ -14,7 +14,9 @@ fi
 LOG_PATH="${BOOT_DIR}/m3i-bridge-firstboot.log"
 exec >>"$LOG_PATH" 2>&1
 
-echo "m3i-bridge first boot install starting"
+echo
+echo "m3i-bridge first boot install starting at $(date -Is)"
+rm -f "${BOOT_DIR}/m3i-bridge-diagnostics.log" "${BOOT_DIR}/m3i-bridge-firstboot.done"
 
 die() {
   echo "error: $*" >&2
@@ -98,10 +100,13 @@ else
 fi
 
 chmod +x "${WORK_DIR}/install.sh"
+if command -v file >/dev/null 2>&1; then
+  file "${WORK_DIR}/m3i-bridge" || true
+fi
 "${WORK_DIR}/install.sh" --no-start
 
 cleanup_cmdline
 touch "${BOOT_DIR}/m3i-bridge-firstboot.done"
 sync
 
-echo "m3i-bridge first boot install complete; rebooting"
+echo "m3i-bridge first boot install complete at $(date -Is); rebooting"

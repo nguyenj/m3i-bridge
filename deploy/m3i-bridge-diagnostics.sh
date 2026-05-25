@@ -31,6 +31,7 @@ fi
 section "m3i-bridge binary"
 run ls -l /usr/local/bin/m3i-bridge
 run file /usr/local/bin/m3i-bridge
+run sha256sum /usr/local/bin/m3i-bridge
 run ldd /usr/local/bin/m3i-bridge
 
 section "systemd services"
