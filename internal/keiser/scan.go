@@ -72,6 +72,7 @@ func (s *Scanner) Run(ctx context.Context) error {
 	propertiesChangedMatchOptions := []dbus.MatchOption{
 		dbus.WithMatchPathNamespace(dbus.ObjectPath("/org/bluez")),
 		dbus.WithMatchInterface("org.freedesktop.DBus.Properties"),
+		dbus.WithMatchMember("PropertiesChanged"),
 	}
 	if err := bus.AddMatchSignal(propertiesChangedMatchOptions...); err != nil {
 		return fmt.Errorf("subscribe to BlueZ properties: %w", err)
@@ -79,8 +80,8 @@ func (s *Scanner) Run(ctx context.Context) error {
 	defer bus.RemoveMatchSignal(propertiesChangedMatchOptions...)
 
 	objectManagerMatchOptions := []dbus.MatchOption{
-		dbus.WithMatchPathNamespace(dbus.ObjectPath("/org/bluez")),
 		dbus.WithMatchInterface("org.freedesktop.DBus.ObjectManager"),
+		dbus.WithMatchMember("InterfacesAdded"),
 	}
 	if err := bus.AddMatchSignal(objectManagerMatchOptions...); err != nil {
 		return fmt.Errorf("subscribe to BlueZ object manager: %w", err)
@@ -99,6 +100,7 @@ func (s *Scanner) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	stats.managedDevices = uint64(len(devices))
 	for _, props := range devices {
 		s.processDevice(props, &filter, &stats)
 	}
@@ -291,6 +293,7 @@ type scanStats struct {
 	reviewOrUnknown uint64
 	parseErrors     uint64
 	dropped         uint64
+	managedDevices  uint64
 
 	lastName           string
 	lastRealtime       time.Time
@@ -309,6 +312,7 @@ func (s *scanStats) log(log *slog.Logger) {
 		"review_or_unknown", s.reviewOrUnknown,
 		"parse_errors", s.parseErrors,
 		"dropped", s.dropped,
+		"managed_devices", s.managedDevices,
 	}
 	if !s.lastRealtime.IsZero() {
 		attrs = append(attrs,

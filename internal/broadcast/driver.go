@@ -326,6 +326,10 @@ func (s *antUSBStick) readLoop() {
 				s.log.Debug("ant rx", "message_id", fmt.Sprintf("0x%02x", msg.ID), "data", fmt.Sprintf("% x", msg.Data))
 			}
 		}
+		if n == 0 && err == nil {
+			sleepOrDone(s.readCtx, antReadErrorBackoff)
+			continue
+		}
 		if err == nil {
 			continue
 		}
