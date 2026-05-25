@@ -1,12 +1,11 @@
 [Unit]
-Description=Write m3i-bridge boot diagnostics to the boot partition
+Description=Write m3i-bridge diagnostics to the boot partition
 After=m3i-bridge.service bluetooth.service hciuart.service systemd-udev-trigger.service
 Wants=m3i-bridge.service
 
 [Service]
 Type=oneshot
-ExecStartPre=/bin/sleep 75
-ExecStart=/usr/local/lib/m3i-bridge/diagnostics.sh
+ExecStart=/bin/sh -c 'sleep 75; /usr/local/lib/m3i-bridge/diagnostics.sh; sleep 225; /usr/local/lib/m3i-bridge/diagnostics.sh; sleep 300; /usr/local/lib/m3i-bridge/diagnostics.sh'
 
 [Install]
 WantedBy=multi-user.target

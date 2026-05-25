@@ -87,8 +87,9 @@ The script copies the payload, adds the first-boot installer, appends the
    rule, disables common network manager services, removes the first-boot hook,
    then reboots.
 6. Second boot starts `m3i-bridge.service` automatically.
-7. About 75 seconds after each normal boot, diagnostics are written to
-   `m3i-bridge-diagnostics.log` on the boot partition.
+7. Diagnostics are written to `m3i-bridge-diagnostics.log` on the boot
+   partition at about 75 seconds, 5 minutes, and 10 minutes after each normal
+   boot.
 
 No login is required.
 

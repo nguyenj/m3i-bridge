@@ -35,6 +35,7 @@ const (
 	radioTransmitPowerMax   byte = 0x03
 	antUSBTransferTimeout        = 750 * time.Millisecond
 	antSetupResponseTimeout      = 2 * time.Second
+	antReadErrorBackoff          = 25 * time.Millisecond
 )
 
 var antPlusNetworkKey = [8]byte{0xB9, 0xA5, 0x21, 0xFB, 0xBD, 0x72, 0xC3, 0x45}
@@ -331,10 +332,24 @@ func (s *antUSBStick) readLoop() {
 		if s.readCtx.Err() != nil {
 			return
 		}
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, gousb.TransferCancelled) {
+		if errors.Is(err, context.DeadlineExceeded) ||
+			errors.Is(err, context.Canceled) ||
+			errors.Is(err, gousb.TransferTimedOut) ||
+			errors.Is(err, gousb.TransferCancelled) {
+			sleepOrDone(s.readCtx, antReadErrorBackoff)
 			continue
 		}
 		s.log.Debug("ant usb read error", "err", err)
+		sleepOrDone(s.readCtx, antReadErrorBackoff)
+	}
+}
+
+func sleepOrDone(ctx context.Context, d time.Duration) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
 	}
 }
 
