@@ -4,6 +4,7 @@ package keiser
 
 import (
 	"encoding/binary"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -31,6 +32,27 @@ func TestRawHCIFilterBytes(t *testing.T) {
 	}
 	if filter[14] != 0 || filter[15] != 0 {
 		t.Fatalf("filter padding = [%d %d], want [0 0]", filter[14], filter[15])
+	}
+}
+
+func TestHCICommandStatusIs(t *testing.T) {
+	opcode := hciOpcode(hciOGFLEControl, hciOCFLESetScanEnable)
+	err := hciCommandError{opcode: opcode, status: hciStatusCommandDisallowed}
+
+	if !hciCommandStatusIs(err, opcode, hciStatusCommandDisallowed) {
+		t.Fatal("direct command status was not matched")
+	}
+	if !hciCommandStatusIs(fmt.Errorf("wrapped: %w", err), opcode, hciStatusCommandDisallowed) {
+		t.Fatal("wrapped command status was not matched")
+	}
+	if hciCommandStatusIs(err, opcode, 0x00) {
+		t.Fatal("wrong status matched")
+	}
+	if hciCommandStatusIs(err, hciOpcode(hciOGFLEControl, hciOCFLESetScanParameters), hciStatusCommandDisallowed) {
+		t.Fatal("wrong opcode matched")
+	}
+	if hciCommandStatusIs(nil, opcode, hciStatusCommandDisallowed) {
+		t.Fatal("nil error matched")
 	}
 }
 

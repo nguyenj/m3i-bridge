@@ -25,6 +25,8 @@ const (
 	hciEventCommandStatus   = 0x0f
 	hciEventLEMeta          = 0x3e
 
+	hciStatusCommandDisallowed = 0x0c
+
 	hciSubeventLEAdvertisingReport         = 0x02
 	hciSubeventLEExtendedAdvertisingReport = 0x0d
 
@@ -140,8 +142,8 @@ func restartRawHCIScan(fd int, log *slog.Logger, reason string) error {
 }
 
 func configureRawHCIScan(fd int, enable bool) error {
-	if err := sendRawHCICommand(fd, hciOpcode(hciOGFLEControl, hciOCFLESetScanEnable), []byte{0x00, 0x00}); err != nil {
-		return err
+	if err := disableRawHCIScan(fd); err != nil {
+		return fmt.Errorf("disable LE scan: %w", err)
 	}
 	if !enable {
 		return nil
@@ -156,12 +158,23 @@ func configureRawHCIScan(fd int, enable bool) error {
 		0x00, // own address type: public
 		0x00, // filter policy: accept all
 	}); err != nil {
-		return err
+		return fmt.Errorf("set LE scan parameters: %w", err)
 	}
-	return sendRawHCICommand(fd, hciOpcode(hciOGFLEControl, hciOCFLESetScanEnable), []byte{
+	if err := sendRawHCICommand(fd, hciOpcode(hciOGFLEControl, hciOCFLESetScanEnable), []byte{
 		0x01, // enable
 		0x00, // do not filter duplicates
-	})
+	}); err != nil {
+		return fmt.Errorf("enable LE scan: %w", err)
+	}
+	return nil
+}
+
+func disableRawHCIScan(fd int) error {
+	err := sendRawHCICommand(fd, hciOpcode(hciOGFLEControl, hciOCFLESetScanEnable), []byte{0x00, 0x00})
+	if hciCommandStatusIs(err, hciOpcode(hciOGFLEControl, hciOCFLESetScanEnable), hciStatusCommandDisallowed) {
+		return nil
+	}
+	return err
 }
 
 func sendRawHCICommand(fd int, opcode uint16, params []byte) error {
@@ -206,11 +219,25 @@ func sendRawHCICommand(fd int, opcode uint16, params []byte) error {
 			continue
 		}
 		if status != 0x00 {
-			return fmt.Errorf("HCI command 0x%04x status 0x%02x", opcode, status)
+			return hciCommandError{opcode: opcode, status: status}
 		}
 		return nil
 	}
 	return fmt.Errorf("timeout waiting for HCI command 0x%04x response", opcode)
+}
+
+type hciCommandError struct {
+	opcode uint16
+	status byte
+}
+
+func (e hciCommandError) Error() string {
+	return fmt.Sprintf("HCI command 0x%04x status 0x%02x", e.opcode, e.status)
+}
+
+func hciCommandStatusIs(err error, opcode uint16, status byte) bool {
+	var cmdErr hciCommandError
+	return errors.As(err, &cmdErr) && cmdErr.opcode == opcode && cmdErr.status == status
 }
 
 func setRawHCIFilter(fd int) error {
