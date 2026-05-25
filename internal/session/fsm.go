@@ -4,7 +4,7 @@
 // for downstream consumers (the ANT+ broadcaster). It encodes the timing
 // semantics needed for Keiser realtime BLE adverts:
 //
-//   - StatsTimeoutNew = 1s and StatsTimeoutOld = 7s (stats freshness window;
+//   - StatsTimeoutNew = 7s and StatsTimeoutOld = 7s (stats freshness window;
 //     zeros are emitted when exceeded but the session stays alive)
 //   - BikeTimeout = 60s (no realtime advert for this long ends the session)
 //
@@ -21,7 +21,9 @@ import (
 
 // Keiser session timing constants.
 const (
-	StatsTimeoutNew = 1 * time.Second
+	// Keep ANT+ stats stable through short BLE receive gaps. A real stop still
+	// reaches Garmin immediately when the bike advertises zero power/cadence.
+	StatsTimeoutNew = 7 * time.Second
 	StatsTimeoutOld = 7 * time.Second
 	BikeTimeout     = 60 * time.Second
 )

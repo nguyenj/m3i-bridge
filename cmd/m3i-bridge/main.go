@@ -76,9 +76,8 @@ func buildInfoAttrs() []any {
 func run(ctx context.Context, log *slog.Logger) error {
 	adverts := make(chan keiser.Advert, 16)
 	events := make(chan session.Event, 16)
-	scanRestarts := make(chan string, 4)
 
-	scanner := &keiser.Scanner{Logger: log.With("component", "scanner"), Out: adverts, Restart: scanRestarts}
+	scanner := &keiser.Scanner{Logger: log.With("component", "scanner"), Out: adverts}
 	broadcaster := &broadcast.Broadcaster{Logger: log.With("component", "broadcaster"), Events: events}
 
 	scanErr := make(chan error, 1)
@@ -87,7 +86,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go func() { scanErr <- scanner.Run(ctx) }()
 	go func() { broadErr <- broadcaster.Run(ctx) }()
 
-	go runFSM(ctx, log.With("component", "fsm"), adverts, events, scanRestarts)
+	go runFSM(ctx, log.With("component", "fsm"), adverts, events)
 
 	select {
 	case <-ctx.Done():
@@ -120,7 +119,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 // runFSM drives the session state machine from incoming adverts and forwards
 // the resulting events to the broadcaster. It also ticks the FSM periodically
 // so timeouts fire even when adverts have stopped arriving.
-func runFSM(ctx context.Context, log *slog.Logger, adverts <-chan keiser.Advert, events chan<- session.Event, scanRestarts chan<- string) {
+func runFSM(ctx context.Context, log *slog.Logger, adverts <-chan keiser.Advert, events chan<- session.Event) {
 	fsm := session.New(nil)
 
 	// Ticker resolution: at 4 Hz the FSM never delays a state-change by more
@@ -133,14 +132,14 @@ func runFSM(ctx context.Context, log *slog.Logger, adverts <-chan keiser.Advert,
 		case <-ctx.Done():
 			return
 		case a := <-adverts:
-			emit(log, events, scanRestarts, fsm.Observe(a), fsm.State())
+			emit(log, events, fsm.Observe(a), fsm.State())
 		case <-ticker.C:
-			emit(log, events, scanRestarts, fsm.Tick(), fsm.State())
+			emit(log, events, fsm.Tick(), fsm.State())
 		}
 	}
 }
 
-func emit(log *slog.Logger, events chan<- session.Event, scanRestarts chan<- string, ev []session.Event, state session.State) {
+func emit(log *slog.Logger, events chan<- session.Event, ev []session.Event, state session.State) {
 	for _, e := range ev {
 		switch e.Type {
 		case session.EventSessionStarted:
@@ -148,12 +147,7 @@ func emit(log *slog.Logger, events chan<- session.Event, scanRestarts chan<- str
 		case session.EventSessionEnded:
 			log.Info("session ended", "state", state)
 		case session.EventSessionStale:
-			log.Info("session stale: emitting zeros and restarting BLE discovery", "state", state)
-			select {
-			case scanRestarts <- "session stale":
-			default:
-				log.Warn("BLE restart request dropped: scanner channel full")
-			}
+			log.Info("session stale: emitting zeros", "state", state)
 		case session.EventStatsUpdated:
 			log.Debug("stats", "power", e.Power, "cadence", e.Cadence, "distance_valid", e.DistanceValid, "distance_tenths", e.DistanceTenths, "distance_metric", e.DistanceMetric)
 		}

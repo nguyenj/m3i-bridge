@@ -110,6 +110,11 @@ func TestFSM_StatsTimeoutNewFirmwareGoesStale(t *testing.T) {
 	fsm := New(clk)
 	fsm.Observe(realtimeAdvert(clk.t, 150, 80, true))
 
+	clk.Advance(2 * time.Second)
+	if events := fsm.Tick(); len(events) != 0 {
+		t.Errorf("short new-firmware receive gap should not zero stats, got %+v", events)
+	}
+
 	clk.Advance(StatsTimeoutNew + 100*time.Millisecond)
 	events := fsm.Tick()
 	if _, ok := findEvent(events, EventSessionStale); !ok {
