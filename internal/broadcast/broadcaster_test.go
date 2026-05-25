@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nguyenj/m3i-bridge/internal/antplus"
 	"github.com/nguyenj/m3i-bridge/internal/session"
 )
 
@@ -19,6 +20,14 @@ type sentBroadcast struct {
 type fakeANTController struct {
 	events chan antEvent
 	sent   []sentBroadcast
+	ids    []channelID
+}
+
+type channelID struct {
+	channel         byte
+	deviceNumber    uint16
+	deviceType      byte
+	transmissionTyp byte
 }
 
 func newFakeANTController() *fakeANTController {
@@ -35,7 +44,13 @@ func (f *fakeANTController) SetNetworkKey(context.Context, byte, [8]byte) error 
 func (f *fakeANTController) AssignChannel(context.Context, byte, byte, byte) error {
 	return nil
 }
-func (f *fakeANTController) SetChannelID(context.Context, byte, uint16, byte, byte) error {
+func (f *fakeANTController) SetChannelID(_ context.Context, channel byte, deviceNumber uint16, deviceType, transmissionType byte) error {
+	f.ids = append(f.ids, channelID{
+		channel:         channel,
+		deviceNumber:    deviceNumber,
+		deviceType:      deviceType,
+		transmissionTyp: transmissionType,
+	})
 	return nil
 }
 func (f *fakeANTController) SetChannelRFFrequency(context.Context, byte, byte) error {
@@ -101,6 +116,25 @@ func TestBroadcasterStateSendsPowerPageOnTXEvent(t *testing.T) {
 	}
 }
 
+func TestBroadcasterStateUsesGlobalDataPageTransmissionType(t *testing.T) {
+	fake := newFakeANTController()
+	state := broadcasterState{log: discardLogger(), dev: fake}
+	ctx := context.Background()
+
+	if err := state.startSession(ctx); err != nil {
+		t.Fatalf("startSession: %v", err)
+	}
+
+	if len(fake.ids) != 2 {
+		t.Fatalf("channel ids = %d, want 2", len(fake.ids))
+	}
+	for _, id := range fake.ids {
+		if id.transmissionTyp != transmissionType {
+			t.Fatalf("channel %d transmission type = %#x, want %#x", id.channel, id.transmissionTyp, transmissionType)
+		}
+	}
+}
+
 func TestBroadcasterStateSendsSpeedPageOnTXEvent(t *testing.T) {
 	fake := newFakeANTController()
 	state := broadcasterState{log: discardLogger(), dev: fake}
@@ -128,6 +162,57 @@ func TestBroadcasterStateSendsSpeedPageOnTXEvent(t *testing.T) {
 	}
 	if state.txEvents != 1 || state.speedBroadcasts != 1 {
 		t.Fatalf("counters tx=%d speed=%d, want 1/1", state.txEvents, state.speedBroadcasts)
+	}
+}
+
+func TestBroadcasterStateInterleavesCommonPowerPages(t *testing.T) {
+	fake := newFakeANTController()
+	state := broadcasterState{log: discardLogger(), dev: fake}
+	ctx := context.Background()
+
+	if err := state.startSession(ctx); err != nil {
+		t.Fatalf("startSession: %v", err)
+	}
+	state.applyStats(session.Event{
+		At:      time.Unix(10, 0),
+		Power:   123,
+		Cadence: 87,
+	})
+	for range 4 {
+		if err := state.handleANTEvent(ctx, antEvent{channel: powerChannelNumber, code: eventTx}); err != nil {
+			t.Fatalf("handleANTEvent: %v", err)
+		}
+	}
+
+	got := lastBroadcast(t, fake, powerChannelNumber)
+	if got[0] != antplus.CommonPageManufacturer {
+		t.Fatalf("power page = 0x%02x, want common page 80", got[0])
+	}
+	if state.powerBroadcasts != 4 || state.commonBroadcasts != 1 || state.nonZeroBroadcasts != 3 {
+		t.Fatalf("counters power=%d common=%d nonzero=%d, want 4/1/3", state.powerBroadcasts, state.commonBroadcasts, state.nonZeroBroadcasts)
+	}
+}
+
+func TestBroadcasterStateInterleavesCommonSpeedPages(t *testing.T) {
+	fake := newFakeANTController()
+	state := broadcasterState{log: discardLogger(), dev: fake}
+	ctx := context.Background()
+
+	if err := state.startSession(ctx); err != nil {
+		t.Fatalf("startSession: %v", err)
+	}
+	for range 8 {
+		if err := state.handleANTEvent(ctx, antEvent{channel: speedChannelNumber, code: eventTx}); err != nil {
+			t.Fatalf("handleANTEvent: %v", err)
+		}
+	}
+
+	got := lastBroadcast(t, fake, speedChannelNumber)
+	if got[0] != antplus.CommonPageProduct {
+		t.Fatalf("speed page = 0x%02x, want common page 81", got[0])
+	}
+	if state.speedBroadcasts != 8 || state.commonBroadcasts != 3 {
+		t.Fatalf("counters speed=%d common=%d, want 8/3", state.speedBroadcasts, state.commonBroadcasts)
 	}
 }
 

@@ -24,7 +24,11 @@ const (
 	networkNumber      uint8  = 0
 	powerDeviceNumber  uint16 = 0x52E1 // arbitrary, must be non-zero
 	speedDeviceNumber  uint16 = 0x52E2 // separate Bike Speed sensor identity
-	transmissionType   uint8  = 1      // stable non-zero ANT+ transmission type
+	transmissionType   uint8  = 0x05   // independent ANT+ channel with global data pages
+
+	powerModelNumber uint16 = 1
+	speedModelNumber uint16 = 2
+	softwareRevision uint8  = 1
 )
 
 // Broadcaster owns the ANT USB stick and turns session events into ANT+ Power
@@ -146,6 +150,7 @@ type broadcasterState struct {
 	refreshBroadcasts uint64
 	powerBroadcasts   uint64
 	speedBroadcasts   uint64
+	commonBroadcasts  uint64
 	nonZeroBroadcasts uint64
 }
 
@@ -265,12 +270,14 @@ func (s *broadcasterState) broadcastPower(ctx context.Context) error {
 	if !s.active {
 		return nil
 	}
-	powerPage := s.powerEncoder.EncodePage10(s.power, s.cadence)
+	powerPage := s.nextPowerPage()
 	if err := s.dev.SendBroadcastData(ctx, powerChannelNumber, powerPage[:]); err != nil {
 		return fmt.Errorf("ant broadcast power: %w", err)
 	}
 	s.powerBroadcasts++
-	if s.power > 0 || s.cadence > 0 {
+	if isCommonPage(powerPage) {
+		s.commonBroadcasts++
+	} else if s.power > 0 || s.cadence > 0 {
 		s.nonZeroBroadcasts++
 	}
 	return nil
@@ -280,12 +287,33 @@ func (s *broadcasterState) broadcastSpeed(ctx context.Context) error {
 	if !s.active {
 		return nil
 	}
-	speedPage := s.speedEncoder.EncodePage0()
+	speedPage := s.nextSpeedPage()
 	if err := s.dev.SendBroadcastData(ctx, speedChannelNumber, speedPage[:]); err != nil {
 		return fmt.Errorf("ant broadcast speed: %w", err)
 	}
 	s.speedBroadcasts++
+	if isCommonPage(speedPage) {
+		s.commonBroadcasts++
+	}
 	return nil
+}
+
+func (s *broadcasterState) nextPowerPage() [8]byte {
+	if page, ok := antplus.CommonInterleavedPage(s.powerBroadcasts+1, powerModelNumber, softwareRevision, uint32(powerDeviceNumber)); ok {
+		return page
+	}
+	return s.powerEncoder.EncodePage10(s.power, s.cadence)
+}
+
+func (s *broadcasterState) nextSpeedPage() [8]byte {
+	if page, ok := antplus.CommonInterleavedPage(s.speedBroadcasts+1, speedModelNumber, softwareRevision, uint32(speedDeviceNumber)); ok {
+		return page
+	}
+	return s.speedEncoder.EncodePage0()
+}
+
+func isCommonPage(page [8]byte) bool {
+	return page[0] == antplus.CommonPageManufacturer || page[0] == antplus.CommonPageProduct
 }
 
 func (s *broadcasterState) logSummary() {
@@ -298,5 +326,6 @@ func (s *broadcasterState) logSummary() {
 		"refresh_broadcasts", s.refreshBroadcasts,
 		"power_broadcasts", s.powerBroadcasts,
 		"speed_broadcasts", s.speedBroadcasts,
+		"common_broadcasts", s.commonBroadcasts,
 		"non_zero_broadcasts", s.nonZeroBroadcasts)
 }
