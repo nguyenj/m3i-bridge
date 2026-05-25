@@ -18,6 +18,12 @@ const (
 	PowerDeviceType    uint8  = 0x0B
 	PowerChannelPeriod uint16 = 8182 // 8182/32768 Hz ~= 4.0049 Hz
 	RFFrequency        uint8  = 57   // 2457 MHz, the ANT+ "public" frequency
+
+	PowerPageCalibration uint8 = 0x01
+	PowerPageStandard    uint8 = 0x10
+
+	CalibrationRequest uint8 = 0xAA
+	CalibrationSuccess uint8 = 0xAC
 )
 
 // PowerEncoder produces ANT+ Standard Power-Only broadcast payloads (page
@@ -52,12 +58,24 @@ func (e *PowerEncoder) EncodePage10(power, cadence uint16) [8]byte {
 	}
 
 	var p [8]byte
-	p[0] = 0x10
+	p[0] = PowerPageStandard
 	p[1] = e.eventCount
 	p[2] = 0xFF
 	p[3] = cadenceByte
 	binary.LittleEndian.PutUint16(p[4:6], e.accumulatedPower)
 	binary.LittleEndian.PutUint16(p[6:8], power)
+	return p
+}
+
+// EncodeCalibrationResponse builds a successful general calibration response.
+// The bridge has no torque zero-offset to perform, so it reports success,
+// auto-zero unsupported, and a zero manufacturer-specific calibration value.
+func EncodeCalibrationResponse() [8]byte {
+	var p [8]byte
+	p[0] = PowerPageCalibration
+	p[1] = CalibrationSuccess
+	p[2] = InvalidCommonPageByte
+	p[3], p[4], p[5] = InvalidCommonPageByte, InvalidCommonPageByte, InvalidCommonPageByte
 	return p
 }
 

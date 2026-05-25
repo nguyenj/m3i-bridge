@@ -27,6 +27,7 @@ const (
 	msgOpenChannel          byte = 0x4B
 	msgCloseChannel         byte = 0x4C
 	msgBroadcastData        byte = 0x4E
+	msgAcknowledgedData     byte = 0x4F
 	msgChannelID            byte = 0x51
 	msgChannelTransmitPower byte = 0x60
 	msgStartup              byte = 0x6F
@@ -55,6 +56,7 @@ type antController interface {
 	UnassignChannel(context.Context, byte) error
 	SendBroadcastData(context.Context, byte, []byte) error
 	ChannelEvents() <-chan antEvent
+	DataMessages() <-chan antDataMessage
 }
 
 type antOpenFunc func(context.Context, *slog.Logger) (antController, error)
@@ -73,6 +75,7 @@ type antUSBStick struct {
 	readDone   chan struct{}
 	responses  chan antMessage
 	events     chan antEvent
+	data       chan antDataMessage
 
 	writeMu sync.Mutex
 }
@@ -91,6 +94,12 @@ type antMessage struct {
 type antEvent struct {
 	channel byte
 	code    byte
+}
+
+type antDataMessage struct {
+	channel      byte
+	data         [8]byte
+	acknowledged bool
 }
 
 func openANTUSB(ctx context.Context, log *slog.Logger) (antController, error) {
@@ -174,6 +183,7 @@ func openANTUSBCandidate(parent context.Context, log *slog.Logger, candidate ant
 		readDone:   make(chan struct{}),
 		responses:  make(chan antMessage, 128),
 		events:     make(chan antEvent, 512),
+		data:       make(chan antDataMessage, 128),
 	}
 	go stick.readLoop()
 	return stick, nil
@@ -276,6 +286,10 @@ func (s *antUSBStick) ChannelEvents() <-chan antEvent {
 	return s.events
 }
 
+func (s *antUSBStick) DataMessages() <-chan antDataMessage {
+	return s.data
+}
+
 func (s *antUSBStick) command(ctx context.Context, messageID byte, payload []byte) error {
 	if err := s.send(ctx, messageID, payload); err != nil {
 		return err
@@ -344,6 +358,13 @@ func (s *antUSBStick) readLoop() {
 						s.log.Warn("ant event dropped: channel full", "channel", ev.channel, "code", fmt.Sprintf("0x%02x", ev.code))
 					}
 				}
+				if data, ok := parseANTDataMessage(msg); ok {
+					select {
+					case s.data <- data:
+					default:
+						s.log.Warn("ant data dropped: channel full", "channel", data.channel, "page", fmt.Sprintf("0x%02x", data.data[0]))
+					}
+				}
 				select {
 				case s.responses <- msg:
 				default:
@@ -377,7 +398,24 @@ func parseANTEvent(msg antMessage) (antEvent, bool) {
 	if msg.ID != msgResponseEvent || len(msg.Data) < 3 || msg.Data[1] != msgChannelEvent {
 		return antEvent{}, false
 	}
-	return antEvent{channel: msg.Data[0], code: msg.Data[2]}, true
+	return antEvent{channel: msg.Data[0] & 0x1F, code: msg.Data[2]}, true
+}
+
+func parseANTDataMessage(msg antMessage) (antDataMessage, bool) {
+	if msg.ID != msgBroadcastData && msg.ID != msgAcknowledgedData {
+		return antDataMessage{}, false
+	}
+	if len(msg.Data) < 9 {
+		return antDataMessage{}, false
+	}
+
+	var data [8]byte
+	copy(data[:], msg.Data[1:9])
+	return antDataMessage{
+		channel:      msg.Data[0] & 0x1F,
+		data:         data,
+		acknowledged: msg.ID == msgAcknowledgedData,
+	}, true
 }
 
 func sleepOrDone(ctx context.Context, d time.Duration) {

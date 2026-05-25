@@ -7,6 +7,7 @@ import "encoding/binary"
 const (
 	CommonPageManufacturer uint8 = 0x50
 	CommonPageProduct      uint8 = 0x51
+	CommonPageRequest      uint8 = 0x46
 
 	HardwareRevision      uint8  = 1
 	ManufacturerID        uint16 = 0x00FF // FIT manufacturer 255: development.
@@ -40,9 +41,9 @@ func EncodeCommonPage81(softwareRevision uint8, serialNumber uint32) [8]byte {
 // device identity without delaying measurement pages for long.
 func CommonInterleavedPage(count uint64, modelNumber uint16, softwareRevision uint8, serialNumber uint32) ([8]byte, bool) {
 	switch count {
-	case 4, 5:
+	case 1, 2:
 		return EncodeCommonPage80(modelNumber), true
-	case 8, 9:
+	case 3, 4:
 		return EncodeCommonPage81(softwareRevision, serialNumber), true
 	}
 

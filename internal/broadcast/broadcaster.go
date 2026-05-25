@@ -24,11 +24,13 @@ const (
 	networkNumber      uint8  = 0
 	powerDeviceNumber  uint16 = 0x52E1 // arbitrary, must be non-zero
 	speedDeviceNumber  uint16 = 0x52E2 // separate Bike Speed sensor identity
-	transmissionType   uint8  = 0x05   // independent ANT+ channel with global data pages
+	powerTransmission  uint8  = 0x05   // Bicycle Power uses global data pages.
+	speedTransmission  uint8  = 0x01   // Bike Speed does not use global data pages.
 
 	powerModelNumber uint16 = 1
-	speedModelNumber uint16 = 2
 	softwareRevision uint8  = 1
+
+	powerResponseRepeats = 4
 )
 
 // Broadcaster owns the ANT USB stick and turns session events into ANT+ Power
@@ -90,7 +92,9 @@ func (b *Broadcaster) Run(ctx context.Context) error {
 		"speed_wheel_mm", antplus.VirtualWheelCircumferenceMM,
 		"rf_freq", antplus.RFFrequency,
 		"power_period", antplus.PowerChannelPeriod,
-		"speed_period", antplus.SpeedChannelPeriod)
+		"speed_period", antplus.SpeedChannelPeriod,
+		"power_transmission_type", powerTransmission,
+		"speed_transmission_type", speedTransmission)
 
 	state := broadcasterState{log: log, dev: device}
 	if err := state.startSession(ctx); err != nil {
@@ -106,6 +110,7 @@ func (b *Broadcaster) Run(ctx context.Context) error {
 	summaryTicker := time.NewTicker(30 * time.Second)
 	defer summaryTicker.Stop()
 	channelEvents := device.ChannelEvents()
+	dataMessages := device.DataMessages()
 
 	for {
 		select {
@@ -122,6 +127,8 @@ func (b *Broadcaster) Run(ctx context.Context) error {
 			if err := state.handleANTEvent(ctx, ev); err != nil {
 				return err
 			}
+		case msg := <-dataMessages:
+			state.handleANTData(msg)
 		case <-refreshTicker.C:
 			state.refreshBroadcasts++
 			if err := state.broadcastAll(ctx); err != nil {
@@ -144,14 +151,19 @@ type broadcasterState struct {
 	active       bool
 	power        uint16
 	cadence      uint16
+	pendingPower [][8]byte
 
-	channelEvents     uint64
-	txEvents          uint64
-	refreshBroadcasts uint64
-	powerBroadcasts   uint64
-	speedBroadcasts   uint64
-	commonBroadcasts  uint64
-	nonZeroBroadcasts uint64
+	channelEvents      uint64
+	txEvents           uint64
+	rxMessages         uint64
+	calibrationReqs    uint64
+	pageRequests       uint64
+	responseBroadcasts uint64
+	refreshBroadcasts  uint64
+	powerBroadcasts    uint64
+	speedBroadcasts    uint64
+	commonBroadcasts   uint64
+	nonZeroBroadcasts  uint64
 }
 
 func (s *broadcasterState) handle(ctx context.Context, ev session.Event) error {
@@ -180,6 +192,48 @@ func (s *broadcasterState) applyStats(ev session.Event) {
 	}
 }
 
+func (s *broadcasterState) handleANTData(msg antDataMessage) {
+	s.rxMessages++
+	page := msg.data[0]
+	s.log.Info("ant rx data",
+		"channel", msg.channel,
+		"acknowledged", msg.acknowledged,
+		"page", fmt.Sprintf("0x%02x", page),
+		"data", fmt.Sprintf("% x", msg.data))
+
+	if msg.channel != powerChannelNumber {
+		return
+	}
+
+	switch page {
+	case antplus.PowerPageCalibration:
+		if msg.data[1] == antplus.CalibrationRequest {
+			s.calibrationReqs++
+			s.queuePowerResponse(antplus.EncodeCalibrationResponse(), powerResponseRepeats)
+			s.log.Info("queued power calibration response", "repeats", powerResponseRepeats)
+		}
+	case antplus.CommonPageRequest:
+		s.handlePowerPageRequest(msg.data)
+	}
+}
+
+func (s *broadcasterState) handlePowerPageRequest(data [8]byte) {
+	requestedPage := data[6]
+	switch requestedPage {
+	case antplus.CommonPageManufacturer:
+		s.pageRequests++
+		s.queuePowerResponse(antplus.EncodeCommonPage80(powerModelNumber), responseRepeats(data[5]))
+	case antplus.CommonPageProduct:
+		s.pageRequests++
+		s.queuePowerResponse(antplus.EncodeCommonPage81(softwareRevision, uint32(powerDeviceNumber)), responseRepeats(data[5]))
+	case antplus.PowerPageStandard:
+		s.pageRequests++
+		s.queuePowerResponse(s.powerEncoder.EncodePage10(s.power, s.cadence), responseRepeats(data[5]))
+	default:
+		s.log.Info("ignoring unsupported ANT+ page request", "requested_page", fmt.Sprintf("0x%02x", requestedPage))
+	}
+}
+
 func (s *broadcasterState) handleANTEvent(ctx context.Context, ev antEvent) error {
 	s.channelEvents++
 	if ev.code != eventTx {
@@ -202,17 +256,18 @@ func (s *broadcasterState) startSession(ctx context.Context) error {
 	}
 	s.log.Info("ant+ opening power-meter and bike-speed channels")
 	s.powerEncoder = antplus.PowerEncoder{}
-	if err := s.openChannel(ctx, powerChannelNumber, powerDeviceNumber, antplus.PowerDeviceType, antplus.PowerChannelPeriod); err != nil {
+	s.pendingPower = nil
+	if err := s.openChannel(ctx, powerChannelNumber, powerDeviceNumber, antplus.PowerDeviceType, powerTransmission, antplus.PowerChannelPeriod); err != nil {
 		return err
 	}
-	if err := s.openChannel(ctx, speedChannelNumber, speedDeviceNumber, antplus.SpeedDeviceType, antplus.SpeedChannelPeriod); err != nil {
+	if err := s.openChannel(ctx, speedChannelNumber, speedDeviceNumber, antplus.SpeedDeviceType, speedTransmission, antplus.SpeedChannelPeriod); err != nil {
 		return err
 	}
 	s.active = true
 	return nil
 }
 
-func (s *broadcasterState) openChannel(ctx context.Context, channel uint8, deviceNumber uint16, deviceType uint8, period uint16) error {
+func (s *broadcasterState) openChannel(ctx context.Context, channel uint8, deviceNumber uint16, deviceType uint8, transmissionType uint8, period uint16) error {
 	if err := s.dev.AssignChannel(ctx, channel, channelTypeTransmit, networkNumber); err != nil {
 		return fmt.Errorf("ant assign channel %d: %w", channel, err)
 	}
@@ -231,7 +286,7 @@ func (s *broadcasterState) openChannel(ctx context.Context, channel uint8, devic
 	if err := s.dev.OpenChannel(ctx, channel); err != nil {
 		return fmt.Errorf("ant open channel %d: %w", channel, err)
 	}
-	s.log.Info("ant channel opened", "channel", channel, "device_number", deviceNumber, "device_type", deviceType, "period", period)
+	s.log.Info("ant channel opened", "channel", channel, "device_number", deviceNumber, "device_type", deviceType, "transmission_type", transmissionType, "period", period)
 	return nil
 }
 
@@ -254,6 +309,7 @@ func (s *broadcasterState) endSession(ctx context.Context) {
 	}
 	s.active = false
 	s.power, s.cadence = 0, 0
+	s.pendingPower = nil
 }
 
 func (s *broadcasterState) broadcastAll(ctx context.Context) error {
@@ -277,6 +333,8 @@ func (s *broadcasterState) broadcastPower(ctx context.Context) error {
 	s.powerBroadcasts++
 	if isCommonPage(powerPage) {
 		s.commonBroadcasts++
+	} else if powerPage[0] == antplus.PowerPageCalibration {
+		s.responseBroadcasts++
 	} else if s.power > 0 || s.cadence > 0 {
 		s.nonZeroBroadcasts++
 	}
@@ -292,13 +350,16 @@ func (s *broadcasterState) broadcastSpeed(ctx context.Context) error {
 		return fmt.Errorf("ant broadcast speed: %w", err)
 	}
 	s.speedBroadcasts++
-	if isCommonPage(speedPage) {
-		s.commonBroadcasts++
-	}
 	return nil
 }
 
 func (s *broadcasterState) nextPowerPage() [8]byte {
+	if len(s.pendingPower) > 0 {
+		page := s.pendingPower[0]
+		copy(s.pendingPower, s.pendingPower[1:])
+		s.pendingPower = s.pendingPower[:len(s.pendingPower)-1]
+		return page
+	}
 	if page, ok := antplus.CommonInterleavedPage(s.powerBroadcasts+1, powerModelNumber, softwareRevision, uint32(powerDeviceNumber)); ok {
 		return page
 	}
@@ -306,10 +367,24 @@ func (s *broadcasterState) nextPowerPage() [8]byte {
 }
 
 func (s *broadcasterState) nextSpeedPage() [8]byte {
-	if page, ok := antplus.CommonInterleavedPage(s.speedBroadcasts+1, speedModelNumber, softwareRevision, uint32(speedDeviceNumber)); ok {
-		return page
-	}
 	return s.speedEncoder.EncodePage0()
+}
+
+func (s *broadcasterState) queuePowerResponse(page [8]byte, repeats int) {
+	for range repeats {
+		s.pendingPower = append(s.pendingPower, page)
+	}
+	if len(s.pendingPower) > 16 {
+		s.pendingPower = s.pendingPower[len(s.pendingPower)-16:]
+	}
+}
+
+func responseRepeats(requestedTransmission byte) int {
+	repeats := int(requestedTransmission & 0x7F)
+	if repeats <= 0 || repeats > powerResponseRepeats {
+		return powerResponseRepeats
+	}
+	return repeats
 }
 
 func isCommonPage(page [8]byte) bool {
@@ -323,6 +398,10 @@ func (s *broadcasterState) logSummary() {
 		"cadence", s.cadence,
 		"channel_events", s.channelEvents,
 		"tx_events", s.txEvents,
+		"rx_messages", s.rxMessages,
+		"calibration_requests", s.calibrationReqs,
+		"page_requests", s.pageRequests,
+		"response_broadcasts", s.responseBroadcasts,
 		"refresh_broadcasts", s.refreshBroadcasts,
 		"power_broadcasts", s.powerBroadcasts,
 		"speed_broadcasts", s.speedBroadcasts,

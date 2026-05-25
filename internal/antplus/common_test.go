@@ -48,11 +48,11 @@ func TestCommonInterleavedPage(t *testing.T) {
 		page  uint8
 		ok    bool
 	}{
-		{count: 1, ok: false},
-		{count: 4, page: CommonPageManufacturer, ok: true},
-		{count: 5, page: CommonPageManufacturer, ok: true},
-		{count: 8, page: CommonPageProduct, ok: true},
-		{count: 9, page: CommonPageProduct, ok: true},
+		{count: 1, page: CommonPageManufacturer, ok: true},
+		{count: 2, page: CommonPageManufacturer, ok: true},
+		{count: 3, page: CommonPageProduct, ok: true},
+		{count: 4, page: CommonPageProduct, ok: true},
+		{count: 5, ok: false},
 		{count: 65, page: CommonPageManufacturer, ok: true},
 		{count: 66, page: CommonPageManufacturer, ok: true},
 		{count: 131, page: CommonPageProduct, ok: true},

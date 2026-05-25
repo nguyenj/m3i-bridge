@@ -19,6 +19,7 @@ type sentBroadcast struct {
 
 type fakeANTController struct {
 	events chan antEvent
+	data   chan antDataMessage
 	sent   []sentBroadcast
 	ids    []channelID
 }
@@ -31,7 +32,10 @@ type channelID struct {
 }
 
 func newFakeANTController() *fakeANTController {
-	return &fakeANTController{events: make(chan antEvent, 8)}
+	return &fakeANTController{
+		events: make(chan antEvent, 8),
+		data:   make(chan antDataMessage, 8),
+	}
 }
 
 func (f *fakeANTController) Close() error { return nil }
@@ -80,6 +84,9 @@ func (f *fakeANTController) SendBroadcastData(_ context.Context, channel byte, d
 func (f *fakeANTController) ChannelEvents() <-chan antEvent {
 	return f.events
 }
+func (f *fakeANTController) DataMessages() <-chan antDataMessage {
+	return f.data
+}
 
 func TestBroadcasterStateSendsPowerPageOnTXEvent(t *testing.T) {
 	fake := newFakeANTController()
@@ -97,12 +104,14 @@ func TestBroadcasterStateSendsPowerPageOnTXEvent(t *testing.T) {
 		DistanceTenths: 5,
 		DistanceMetric: true,
 	})
-	if err := state.handleANTEvent(ctx, antEvent{channel: powerChannelNumber, code: eventTx}); err != nil {
-		t.Fatalf("handleANTEvent: %v", err)
+	for range 5 {
+		if err := state.handleANTEvent(ctx, antEvent{channel: powerChannelNumber, code: eventTx}); err != nil {
+			t.Fatalf("handleANTEvent: %v", err)
+		}
 	}
 
 	got := lastBroadcast(t, fake, powerChannelNumber)
-	if got[0] != 0x10 {
+	if got[0] != antplus.PowerPageStandard {
 		t.Fatalf("power page = 0x%02x, want 0x10", got[0])
 	}
 	if got[3] != 87 {
@@ -111,8 +120,8 @@ func TestBroadcasterStateSendsPowerPageOnTXEvent(t *testing.T) {
 	if power := binary.LittleEndian.Uint16(got[6:8]); power != 123 {
 		t.Fatalf("instant power = %d, want 123", power)
 	}
-	if state.txEvents != 1 || state.powerBroadcasts != 1 || state.nonZeroBroadcasts != 1 {
-		t.Fatalf("counters tx=%d power=%d nonzero=%d, want 1/1/1", state.txEvents, state.powerBroadcasts, state.nonZeroBroadcasts)
+	if state.txEvents != 5 || state.powerBroadcasts != 5 || state.commonBroadcasts != 4 || state.nonZeroBroadcasts != 1 {
+		t.Fatalf("counters tx=%d power=%d common=%d nonzero=%d, want 5/5/4/1", state.txEvents, state.powerBroadcasts, state.commonBroadcasts, state.nonZeroBroadcasts)
 	}
 }
 
@@ -129,8 +138,12 @@ func TestBroadcasterStateUsesGlobalDataPageTransmissionType(t *testing.T) {
 		t.Fatalf("channel ids = %d, want 2", len(fake.ids))
 	}
 	for _, id := range fake.ids {
-		if id.transmissionTyp != transmissionType {
-			t.Fatalf("channel %d transmission type = %#x, want %#x", id.channel, id.transmissionTyp, transmissionType)
+		want := powerTransmission
+		if id.channel == speedChannelNumber {
+			want = speedTransmission
+		}
+		if id.transmissionTyp != want {
+			t.Fatalf("channel %d transmission type = %#x, want %#x", id.channel, id.transmissionTyp, want)
 		}
 	}
 }
@@ -178,7 +191,7 @@ func TestBroadcasterStateInterleavesCommonPowerPages(t *testing.T) {
 		Power:   123,
 		Cadence: 87,
 	})
-	for range 4 {
+	for range 1 {
 		if err := state.handleANTEvent(ctx, antEvent{channel: powerChannelNumber, code: eventTx}); err != nil {
 			t.Fatalf("handleANTEvent: %v", err)
 		}
@@ -188,12 +201,12 @@ func TestBroadcasterStateInterleavesCommonPowerPages(t *testing.T) {
 	if got[0] != antplus.CommonPageManufacturer {
 		t.Fatalf("power page = 0x%02x, want common page 80", got[0])
 	}
-	if state.powerBroadcasts != 4 || state.commonBroadcasts != 1 || state.nonZeroBroadcasts != 3 {
-		t.Fatalf("counters power=%d common=%d nonzero=%d, want 4/1/3", state.powerBroadcasts, state.commonBroadcasts, state.nonZeroBroadcasts)
+	if state.powerBroadcasts != 1 || state.commonBroadcasts != 1 || state.nonZeroBroadcasts != 0 {
+		t.Fatalf("counters power=%d common=%d nonzero=%d, want 1/1/0", state.powerBroadcasts, state.commonBroadcasts, state.nonZeroBroadcasts)
 	}
 }
 
-func TestBroadcasterStateInterleavesCommonSpeedPages(t *testing.T) {
+func TestBroadcasterStateDoesNotInterleaveCommonSpeedPages(t *testing.T) {
 	fake := newFakeANTController()
 	state := broadcasterState{log: discardLogger(), dev: fake}
 	ctx := context.Background()
@@ -208,11 +221,41 @@ func TestBroadcasterStateInterleavesCommonSpeedPages(t *testing.T) {
 	}
 
 	got := lastBroadcast(t, fake, speedChannelNumber)
-	if got[0] != antplus.CommonPageProduct {
-		t.Fatalf("speed page = 0x%02x, want common page 81", got[0])
+	if got[0] != 0x00 {
+		t.Fatalf("speed page = 0x%02x, want page 0", got[0])
 	}
-	if state.speedBroadcasts != 8 || state.commonBroadcasts != 3 {
-		t.Fatalf("counters speed=%d common=%d, want 8/3", state.speedBroadcasts, state.commonBroadcasts)
+	if state.speedBroadcasts != 8 || state.commonBroadcasts != 0 {
+		t.Fatalf("counters speed=%d common=%d, want 8/0", state.speedBroadcasts, state.commonBroadcasts)
+	}
+}
+
+func TestBroadcasterStateQueuesPowerCalibrationResponse(t *testing.T) {
+	fake := newFakeANTController()
+	state := broadcasterState{log: discardLogger(), dev: fake}
+	ctx := context.Background()
+
+	if err := state.startSession(ctx); err != nil {
+		t.Fatalf("startSession: %v", err)
+	}
+	state.handleANTData(antDataMessage{
+		channel: powerChannelNumber,
+		data: [8]byte{
+			antplus.PowerPageCalibration,
+			antplus.CalibrationRequest,
+			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+		},
+		acknowledged: true,
+	})
+	if err := state.handleANTEvent(ctx, antEvent{channel: powerChannelNumber, code: eventTx}); err != nil {
+		t.Fatalf("handleANTEvent: %v", err)
+	}
+
+	got := lastBroadcast(t, fake, powerChannelNumber)
+	if got[0] != antplus.PowerPageCalibration || got[1] != antplus.CalibrationSuccess {
+		t.Fatalf("power response = % x, want calibration success", got)
+	}
+	if state.calibrationReqs != 1 || state.responseBroadcasts != 1 {
+		t.Fatalf("counters calibration=%d response=%d, want 1/1", state.calibrationReqs, state.responseBroadcasts)
 	}
 }
 

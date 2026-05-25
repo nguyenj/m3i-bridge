@@ -52,13 +52,29 @@ func TestANTDecoderDropsBadChecksum(t *testing.T) {
 func TestParseANTEventTX(t *testing.T) {
 	ev, ok := parseANTEvent(antMessage{
 		ID:   msgResponseEvent,
-		Data: []byte{0x02, msgChannelEvent, eventTx},
+		Data: []byte{0x82, msgChannelEvent, eventTx},
 	})
 	if !ok {
 		t.Fatal("EVENT_TX was not parsed")
 	}
 	if ev.channel != 0x02 || ev.code != eventTx {
 		t.Fatalf("event = %+v, want channel 2 code EVENT_TX", ev)
+	}
+}
+
+func TestParseANTDataMessage(t *testing.T) {
+	data, ok := parseANTDataMessage(antMessage{
+		ID:   msgAcknowledgedData,
+		Data: []byte{0x80, 0x01, 0xAA, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
+	})
+	if !ok {
+		t.Fatal("acknowledged data was not parsed")
+	}
+	if data.channel != 0 || !data.acknowledged {
+		t.Fatalf("metadata = %+v, want channel 0 acknowledged", data)
+	}
+	if data.data != [8]byte{0x01, 0xAA, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF} {
+		t.Fatalf("data = % x", data.data)
 	}
 }
 

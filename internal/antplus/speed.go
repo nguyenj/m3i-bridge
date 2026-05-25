@@ -8,7 +8,7 @@ import (
 // Bike Speed channel constants per ANT+ device profile 0x7B.
 const (
 	SpeedDeviceType    uint8  = 0x7B
-	SpeedChannelPeriod uint16 = 8086 // ~= 4.05 Hz
+	SpeedChannelPeriod uint16 = 8118 // ~= 4.04 Hz for speed-only sensors.
 
 	// The bridge exposes Keiser distance through a virtual wheel. Set the
 	// paired Garmin speed sensor wheel size to this value so Garmin's recorded

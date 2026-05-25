@@ -9,8 +9,8 @@ func TestEncodePage10_LayoutAndCounters(t *testing.T) {
 	var enc PowerEncoder
 	page := enc.EncodePage10(150, 80)
 
-	if page[0] != 0x10 {
-		t.Errorf("page[0] = %#x, want 0x10", page[0])
+	if page[0] != PowerPageStandard {
+		t.Errorf("page[0] = %#x, want %#x", page[0], PowerPageStandard)
 	}
 	if page[1] != 1 {
 		t.Errorf("event_count = %d, want 1 (first call)", page[1])
@@ -26,6 +26,23 @@ func TestEncodePage10_LayoutAndCounters(t *testing.T) {
 	}
 	if got := binary.LittleEndian.Uint16(page[6:8]); got != 150 {
 		t.Errorf("instantaneous_power = %d, want 150", got)
+	}
+}
+
+func TestEncodeCalibrationResponse(t *testing.T) {
+	page := EncodeCalibrationResponse()
+
+	if page[0] != PowerPageCalibration {
+		t.Fatalf("page[0] = %#x, want %#x", page[0], PowerPageCalibration)
+	}
+	if page[1] != CalibrationSuccess {
+		t.Fatalf("calibration id = %#x, want success", page[1])
+	}
+	if page[2] != 0xFF || page[3] != 0xFF || page[4] != 0xFF || page[5] != 0xFF {
+		t.Fatalf("reserved/autozero bytes = % x, want ff ff ff ff", page[2:6])
+	}
+	if got := binary.LittleEndian.Uint16(page[6:8]); got != 0 {
+		t.Fatalf("calibration data = %d, want 0", got)
 	}
 }
 
